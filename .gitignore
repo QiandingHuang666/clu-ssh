@@ -1,0 +1,22 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+
+# uv / venv
+.venv/
+
+# tools caches
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# local only
+.env
+*.sqlite3
+*.sqlite3-journal
+
+# archify 工作区（回执与捕获，可由 candidate.json 再生）
+.archify/

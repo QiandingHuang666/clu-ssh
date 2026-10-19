@@ -1,0 +1,58 @@
+[project]
+name = "clu-ssh"
+description = "AI 能力层 + SSH 会话管理：经 MCP/CLI 连接 Slurm 集群与普通服务器"
+readme = "README.md"
+license = { file = "LICENSE" }
+authors = [{ name = "Qianding Huang" }]
+requires-python = ">=3.11"
+dynamic = ["version"]
+keywords = ["ssh", "slurm", "hpc", "mcp", "agent"]
+dependencies = [
+    "asyncssh>=2.17",
+    "pydantic>=2.7",
+    "rich>=13.7",
+    "tomlkit>=0.13",
+    "typer>=0.12",
+]
+
+[project.scripts]
+clu = "clu.cli:cli_main"
+
+[dependency-groups]
+dev = [
+    "mypy>=1.10",
+    "pytest>=8.2",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.6",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+path = "src/clu/__init__.py"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/clu"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "C4", "SIM", "RUF"]
+# B008: typer/fastapi 的 Option() 默认值惯用法
+ignore = ["B008"]
+# 项目文档与用户文案为中文，全角标点是有意的
+allowed-confusables = ["，", "。", "：", "；", "！", "？", "（", "）", "【", "】", "《", "》", "、", "·", "—", "～", "\u201c", "\u201d", "\u2018", "\u2019"]
+
+[tool.mypy]
+python_version = "3.11"
+strict = true
+files = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
