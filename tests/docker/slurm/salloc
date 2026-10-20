@@ -1,0 +1,16 @@
+#!/bin/sh
+# 假 salloc：默认 1s 后授予固定作业 12345 并 exec 其后命令；
+# 存在 ~/fake-slow 标记文件时延迟 60s（模拟排队）
+if [ -f "$HOME/fake-slow" ]; then sleep 60; else sleep 1; fi
+echo "salloc: Granted job allocation 12345"
+echo "salloc: Nodes cpu48c-4 are ready for job"
+# 跳过开头的 salloc 旗标与其值，剩余命令直接执行
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -J|-p|-t) shift 2 ;;
+    --gpus=*|--mem=*|-N*|-n*|-C*) shift ;;
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+exec "$@"

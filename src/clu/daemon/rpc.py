@@ -11,7 +11,9 @@ from typing import Any
 
 from pydantic import ValidationError
 
+import clu.slurm.alloc as allocops
 import clu.slurm.commands as slurm
+import clu.tmux as tmux
 from clu import __version__
 from clu.config.store import ConfigStore, ConnectionConfig
 from clu.ledger.db import Ledger
@@ -272,3 +274,66 @@ async def _ledger_query(ctx: DaemonContext, params: dict[str, Any]) -> dict[str,
         )
     )
     return {"records": records}
+
+
+@dispatcher.method("slurm.alloc")
+async def _slurm_alloc(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    """申请交互式资源：tmux 内直接执行 salloc 并轮询到授予（DESIGN §6 语义）。"""
+    label = str(params["label"])
+    _cfg, profile = _require_cluster(ctx, label)
+    purpose = str(params.get("purpose") or "alloc")
+    info = await allocops.allocate(
+        _runner(ctx, label),
+        label,
+        purpose=purpose,
+        partition=params.get("partition"),
+        gpus=params.get("gpus"),
+        preempt=bool(params.get("preempt")),
+        profile=profile,
+        wait=float(params.get("wait") or 120.0),
+    )
+    await ctx.ledger.record(
+        kind="alloc",
+        connection=label,
+        command=f"salloc purpose={purpose} partition={params.get('partition') or '-'}"
+        f" gpus={params.get('gpus') or '-'} preempt={params.get('preempt') or False}",
+        job_id=str(info.get("job_id") or "") or None,
+        summary=f"alloc {purpose}: {info.get('state')}",
+    )
+    return info
+
+
+@dispatcher.method("session.list")
+async def _session_list(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    label = params.get("label")
+    data = ctx.store.load()
+    labels = [str(label)] if label else list(data.connections)
+    sessions: list[dict[str, object]] = []
+    for one in labels:
+        if one not in data.connections:
+            raise RpcFailure(ERR_NOT_FOUND, f"未知连接：{one}")
+        sessions.extend(await tmux.list_sessions(_runner(ctx, one), one))
+    return {"sessions": sessions}
+
+
+@dispatcher.method("session.info")
+async def _session_info(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    label = str(params["label"])
+    purpose = str(params["purpose"])
+    _get_connection(ctx, label)
+    return await allocops.session_info(_runner(ctx, label), label, purpose)
+
+
+@dispatcher.method("session.release")
+async def _session_release(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    label = str(params["label"])
+    purpose = str(params["purpose"])
+    _get_connection(ctx, label)
+    result = await allocops.release(_runner(ctx, label), label, purpose)
+    await ctx.ledger.record(
+        kind="release",
+        connection=label,
+        command=f"release {purpose}",
+        summary=f"释放 alloc 会话 {purpose}: {'成功' if result['released'] else '不存在'}",
+    )
+    return result

@@ -22,8 +22,10 @@ app = typer.Typer(
 )
 connection_app = typer.Typer(help="连接配置管理。", no_args_is_help=True)
 server_app = typer.Typer(help="daemon 生命周期管理。", no_args_is_help=True)
+session_app = typer.Typer(help="tmux 托管会话。", no_args_is_help=True)
 app.add_typer(connection_app, name="connection")
 app.add_typer(server_app, name="server")
+app.add_typer(session_app, name="session")
 
 console = Console()
 
@@ -215,6 +217,79 @@ def exec_command(
         console.print(f"[red]{stderr.rstrip()}[/red]")
     console.print(f"[dim]exit={result.get('exit_code')}  {result.get('duration_ms')}ms[/dim]")
     raise typer.Exit(code=int(str(result.get("exit_code") or 0)))
+
+
+def _do_request(method: str, params: dict[str, object]) -> dict[str, object]:
+    async def _call() -> dict[str, object]:
+        async with CluClient(timeout=180.0) as client:
+            return dict(await client.request(method, params))
+
+    result = asyncio.run(_call())
+    return result
+
+
+@session_app.command("list")
+def session_list(label: str = typer.Argument(None, help="连接 label；缺省列出全部。")) -> None:
+    """列出 tmux 托管会话（alloc 资源会话）。"""
+    try:
+        ensure_daemon()
+        result = _do_request("session.list", {"label": label})
+    except CluError as exc:
+        _fail(f"查询失败：{exc.message}")
+        return
+    raw_sessions = result.get("sessions")
+    sessions = (
+        [dict(r) for r in raw_sessions if isinstance(r, dict)]
+        if isinstance(raw_sessions, list)
+        else []
+    )
+    if not sessions:
+        console.print("暂无托管会话")
+        return
+    table = Table(title="托管会话")
+    for col in ("connection", "purpose", "state", "attached"):
+        table.add_column(col)
+    for row in sessions:
+        table.add_row(
+            str(row.get("connection")),
+            str(row.get("purpose")),
+            "在线",
+            str(row.get("attached")),
+        )
+    console.print(table)
+
+
+@app.command("attach")
+def attach(label: str, purpose: str) -> None:
+    """接入托管会话的 tmux（交互式，经系统 ssh -t）。"""
+    import os
+
+    from clu.config.store import ConfigError, ConfigStore
+    from clu.tmux import session_name
+
+    try:
+        data = ConfigStore(connections_path()).load()
+    except ConfigError as exc:
+        _fail(f"配置读取失败：{exc}")
+        return
+    cfg = data.connections.get(label)
+    if cfg is None:
+        _fail(f"未知连接：{label}")
+        return
+    args = ["ssh", "-t", "-p", str(cfg.port)]
+    if cfg.identity:
+        args += ["-i", os.path.expanduser(cfg.identity)]
+    if cfg.proxy:
+        jump = data.connections.get(cfg.proxy)
+        if jump is not None:
+            jump_target = f"{jump.user}@{jump.host}"
+            if jump.port != 22:
+                jump_target += f":{jump.port}"
+            args += ["-J", jump_target]
+    target = f"{cfg.user}@{cfg.host}"
+    args += [target, "tmux attach -t " + session_name(label, purpose)]
+    console.print(f"[dim]{' '.join(args[: len(args) - 1])} tmux attach ...[/dim]")
+    os.execvp("ssh", args)
 
 
 def cli_main() -> None:

@@ -95,6 +95,59 @@ async def ledger_query(
     )
 
 
+@server.tool(name="alloc", annotations=_WRITE)
+async def slurm_alloc(
+    connection: str,
+    purpose: str = "alloc",
+    partition: str | None = None,
+    gpus: int | None = None,
+    preempt: bool = False,
+    wait: float = 120.0,
+) -> dict[str, Any]:
+    """申请交互式资源并直接执行（绝不只返回命令）：tmux 内 salloc，
+    分配后 sleep infinity 保活，断线不丢资源。
+
+    "抢占/抢卡"诉求请传 preempt=True（分区取 profile 配置）。返回 granted/pending/failed 与 job_id。
+
+    Args:
+        connection: cluster 连接 label
+        purpose: 会话用途名（如 train-a100），用于 tmux 会话命名与检索
+        partition: 分区（preempt 时可省，走 profile 配置）
+        gpus: 申请 GPU 数
+        preempt: 抢占模式
+        wait: 等待授予的秒数（超时会话保留，稍后 session_info 查看）
+    """
+    return await _call(
+        "slurm.alloc",
+        {
+            "label": connection,
+            "purpose": purpose,
+            "partition": partition,
+            "gpus": gpus,
+            "preempt": preempt,
+            "wait": wait,
+        },
+    )
+
+
+@server.tool(name="session_list", annotations=_READONLY)
+async def session_list(connection: str | None = None) -> dict[str, Any]:
+    """列出 tmux 托管会话（alloc 资源会话），含所属连接/用途/创建时间。"""
+    return await _call("session.list", {"label": connection})
+
+
+@server.tool(name="session_info", annotations=_READONLY)
+async def session_info(connection: str, purpose: str) -> dict[str, Any]:
+    """查看某个托管会话详情：分配状态、job_id、节点、日志尾部。"""
+    return await _call("session.info", {"label": connection, "purpose": purpose})
+
+
+@server.tool(name="session_release", annotations=_WRITE)
+async def session_release(connection: str, purpose: str) -> dict[str, Any]:
+    """释放托管会话：杀 tmux → salloc 退出 → 资源归还集群。"""
+    return await _call("session.release", {"label": connection, "purpose": purpose})
+
+
 @server.tool(name="connection_list", annotations=_READONLY)
 async def connection_list() -> dict[str, Any]:
     """列出全部受管连接及连接池健康状态（label/kind/host/state）。"""
