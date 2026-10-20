@@ -1,9 +1,13 @@
 """SQLite 留痕：建表与写入（exec_records 单表，DESIGN §7）。检索在 M2 的 query.py。"""
 
+from __future__ import annotations
+
 from datetime import UTC
 from pathlib import Path
 
 import aiosqlite
+
+from clu.ledger.query import LedgerFilter
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS exec_records (
@@ -42,6 +46,18 @@ class Ledger:
         if self._db is not None:
             await self._db.close()
             self._db = None
+
+    @property
+    def db(self) -> aiosqlite.Connection | None:
+        return self._db
+
+    async def query(self, f: LedgerFilter) -> list[dict[str, object]]:
+        """结构化检索；db 未打开时返回空。"""
+        from clu.ledger.query import query_ledger
+
+        if self._db is None:
+            return []
+        return await query_ledger(self._db, f)
 
     async def record(
         self,

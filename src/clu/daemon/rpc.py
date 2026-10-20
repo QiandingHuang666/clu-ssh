@@ -11,11 +11,15 @@ from typing import Any
 
 from pydantic import ValidationError
 
+import clu.slurm.commands as slurm
 from clu import __version__
-from clu.config.store import ConfigStore
+from clu.config.store import ConfigStore, ConnectionConfig
 from clu.ledger.db import Ledger
-from clu.protocol import ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND
-from clu.ssh.connection import CluConnectionError
+from clu.ledger.query import LedgerFilter
+from clu.policy import check_exec, check_submit_script
+from clu.profiles import Profile
+from clu.protocol import ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, ERR_NOT_FOUND
+from clu.ssh.connection import CluConnectionError, ExecResult
 from clu.ssh.pool import ConnectionPool
 
 log = logging.getLogger("clu.daemon.rpc")
@@ -43,6 +47,15 @@ class DaemonContext:
     socket_path: Path
     started: float = field(default_factory=time.time)
     shutdown: asyncio.Event = field(default_factory=asyncio.Event)
+
+
+_MAX_OUTPUT_CHARS = 65536
+
+
+def _truncate(text: str) -> str:
+    if len(text) <= _MAX_OUTPUT_CHARS:
+        return text
+    return text[:_MAX_OUTPUT_CHARS] + f"\n...[clu] 输出超长，截断（原 {len(text)} 字符）"
 
 
 class Dispatcher:
@@ -126,3 +139,136 @@ async def _connection_check(ctx: DaemonContext, params: dict[str, Any]) -> dict[
         "exit_code": result.exit_code,
         "duration_ms": result.duration_ms,
     }
+
+
+def _get_connection(ctx: DaemonContext, label: str) -> tuple[ConnectionConfig, Profile | None]:
+    data = ctx.store.load()
+    cfg = data.connections.get(label)
+    if cfg is None:
+        raise RpcFailure(ERR_NOT_FOUND, f"未知连接：{label}")
+    profile = data.profiles.get(cfg.profile) if cfg.profile else None
+    return cfg, profile
+
+
+def _runner(ctx: DaemonContext, label: str) -> slurm.Runner:
+    async def run(command: str, *, timeout: float | None = None) -> ExecResult:
+        return await ctx.pool.run(label, command, timeout=timeout)
+
+    return run
+
+
+@dispatcher.method("exec")
+async def _exec(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    """执行单条远程命令（安全门 + 留痕）。"""
+    label = str(params["label"])
+    command = str(params["command"])
+    timeout = float(params.get("timeout") or 60.0)
+    cfg, profile = _get_connection(ctx, label)
+    decision = check_exec(
+        command, kind=cfg.kind, extra_heavy=profile.heavy_patterns if profile else None
+    )
+    if not decision.allowed:
+        raise RpcFailure("policy_denied", f"{decision.message}；建议：{decision.suggestion}")
+    result = await ctx.pool.run(label, command, timeout=timeout)
+    await ctx.ledger.record(
+        kind="exec",
+        connection=label,
+        command=command,
+        exit_code=result.exit_code,
+        duration_ms=result.duration_ms,
+    )
+    return {
+        "connection": label,
+        "command": command,
+        "exit_code": result.exit_code,
+        "stdout": _truncate(result.stdout),
+        "stderr": _truncate(result.stderr),
+        "duration_ms": result.duration_ms,
+    }
+
+
+def _require_cluster(ctx: DaemonContext, label: str) -> tuple[ConnectionConfig, Profile | None]:
+    cfg, profile = _get_connection(ctx, label)
+    if cfg.kind != "cluster":
+        raise RpcFailure(
+            ERR_INVALID_PARAMS, f"连接 {label} 的 kind={cfg.kind}，slurm 工具仅用于 cluster 连接"
+        )
+    return cfg, profile
+
+
+@dispatcher.method("slurm.jobs")
+async def _slurm_jobs(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    label = str(params["label"])
+    cfg, _ = _require_cluster(ctx, label)
+    states = [str(s) for s in params["states"]] if params.get("states") else None
+    jobs = await slurm.list_jobs(_runner(ctx, label), cfg.user, states)
+    return {"connection": label, "jobs": jobs}
+
+
+@dispatcher.method("slurm.status")
+async def _slurm_status(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    label = str(params["label"])
+    _require_cluster(ctx, label)
+    return await slurm.cluster_status(_runner(ctx, label))
+
+
+@dispatcher.method("slurm.submit")
+async def _slurm_submit(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    label = str(params["label"])
+    script = str(params["script"])
+    _require_cluster(ctx, label)
+    decision = check_submit_script(script)
+    if not decision.allowed:
+        raise RpcFailure("policy_denied", decision.message)
+    result = await slurm.submit(_runner(ctx, label), script)
+    await ctx.ledger.record(
+        kind="submit",
+        connection=label,
+        command=script[:500],
+        job_id=str(result["job_id"]),
+        summary=f"提交作业 {result['job_id']}",
+    )
+    return {"connection": label, **result}
+
+
+@dispatcher.method("slurm.log")
+async def _slurm_log(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    label = str(params["label"])
+    job_id = str(params["job_id"])
+    tail = int(params.get("tail") or 100)
+    _require_cluster(ctx, label)
+    log = await slurm.job_log(_runner(ctx, label), job_id, tail=tail)
+    log["text"] = _truncate(str(log["text"]))
+    return log
+
+
+@dispatcher.method("slurm.cancel")
+async def _slurm_cancel(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    label = str(params["label"])
+    job_id = str(params["job_id"])
+    _require_cluster(ctx, label)
+    result = await slurm.cancel(_runner(ctx, label), job_id)
+    await ctx.ledger.record(
+        kind="cancel",
+        connection=label,
+        command=f"scancel {job_id}",
+        exit_code=int(str(result["exit_code"] or 0)),
+        summary=f"取消作业 {job_id}",
+    )
+    return result
+
+
+@dispatcher.method("ledger.query")
+async def _ledger_query(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    records = await ctx.ledger.query(
+        LedgerFilter(
+            since=params.get("since"),
+            until=params.get("until"),
+            connection=params.get("connection"),
+            kind=params.get("kind"),
+            keyword=params.get("keyword"),
+            job_id=params.get("job_id"),
+            limit=int(params.get("limit") or 100),
+        )
+    )
+    return {"records": records}

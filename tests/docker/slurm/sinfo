@@ -1,0 +1,4 @@
+#!/bin/sh
+# 假 sinfo：%P|%a|%D|%T|%C|%m|%G 顺序
+echo "gpu|up|4|idle|8/64|512G|gpu:A100:8"
+echo "cpu|up|48|mixed|100/800|256G|(null)"

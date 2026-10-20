@@ -1,0 +1,12 @@
+#!/bin/sh
+# 假 squeue：含 %i| 的完整格式输出作业表；仅 %T 输出状态列
+case "$*" in
+  *%i\|*)
+    echo "12345|RUNNING|fake-train|gpu|01:23:00|1-00:00:00|1|8|64G|gpu:A100:2|None"
+    echo "12346|PENDING|fake-eval|cpu|0:00|2:00:00|1|4|16G|(null)|Resources"
+    ;;
+  *)
+    echo "RUNNING"
+    echo "PENDING"
+    ;;
+esac

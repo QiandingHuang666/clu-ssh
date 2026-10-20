@@ -1,0 +1,5 @@
+#!/bin/sh
+# 假 scontrol show job：输出与 sbatch 的固定路径对应
+if [ "$1" = "show" ] && [ "$2" = "job" ]; then
+  echo "JobId=$3 JobName=fake JobState=RUNNING RunTime=01:23:00 StdOut=$HOME/slurm-12345.out UserId=tester(1000)"
+fi

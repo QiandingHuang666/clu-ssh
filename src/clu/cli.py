@@ -186,6 +186,37 @@ def connection_check(label: str) -> None:
     )
 
 
+@app.command("exec")
+def exec_command(
+    label: str = typer.Argument(..., help="连接 label。"),
+    command: list[str] = typer.Argument(..., help="远程命令（按空格拼接执行）。"),
+    timeout: float = typer.Option(60.0, "--timeout", help="超时秒数。"),
+) -> None:
+    """在连接上执行一条远程命令（受安全门约束）。"""
+
+    async def _do() -> dict[str, object]:
+        async with CluClient(timeout=max(timeout + 30, 60)) as client:
+            return await client.request(
+                "exec",
+                {"label": label, "command": " ".join(command), "timeout": timeout},
+            )
+
+    try:
+        ensure_daemon()
+        result = asyncio.run(_do())
+    except CluError as exc:
+        _fail(f"执行失败：{exc.message}")
+        return
+    stdout = str(result.get("stdout") or "")
+    stderr = str(result.get("stderr") or "")
+    if stdout:
+        console.print(stdout.rstrip())
+    if stderr:
+        console.print(f"[red]{stderr.rstrip()}[/red]")
+    console.print(f"[dim]exit={result.get('exit_code')}  {result.get('duration_ms')}ms[/dim]")
+    raise typer.Exit(code=int(str(result.get("exit_code") or 0)))
+
+
 def cli_main() -> None:
     """console_scripts 入口。"""
     app()

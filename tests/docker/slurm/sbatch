@@ -1,0 +1,9 @@
+#!/bin/sh
+# 假 sbatch：写一行输出到默认路径，返回固定 job id 12345
+out="$HOME/slurm-12345.out"
+for a in "$@"; do
+  case "$a" in --output=*) out="${a#--output=}" ;; esac
+done
+mkdir -p "$(dirname "$out")" 2>/dev/null
+echo "[fake-sbatch] job started at $(date)" > "$out"
+echo "Submitted batch job 12345"
