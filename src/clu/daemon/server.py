@@ -1,1 +1,193 @@
-"""unix socket 监听与客户端会话处理。M1 实现。"""
+"""daemon 服务器：unix socket 监听、NDJSON 会话、信号优雅退出（DESIGN §3）。"""
+
+import asyncio
+import concurrent.futures
+import contextlib
+import logging
+import os
+import signal
+from pathlib import Path
+from typing import Any
+
+import clu.constants as C
+from clu.client import CluError
+from clu.config.store import ConfigStore
+from clu.daemon.rpc import DaemonContext, Dispatcher, RpcFailure
+from clu.daemon.rpc import dispatcher as default_dispatcher
+from clu.ledger.db import Ledger
+from clu.protocol import (
+    RpcErr,
+    RpcError,
+    RpcOk,
+    RpcRequest,
+    decode_request,
+    encode_line,
+)
+from clu.ssh.connection import KnownHosts, make_asyncssh_connector
+from clu.ssh.pool import ConnectionPool
+
+log = logging.getLogger("clu.daemon")
+
+
+async def _respond(writer: asyncio.StreamWriter, resp: RpcOk | RpcErr) -> None:
+    writer.write(encode_line(resp))
+    await writer.drain()
+
+
+async def handle_client(
+    ctx: DaemonContext, disp: Dispatcher, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+) -> None:
+    """单个客户端会话：逐行处理请求直到 EOF。"""
+    peer = writer.get_extra_info("peername")
+    log.debug("客户端接入：%s", peer)
+    try:
+        while True:
+            line = await reader.readline()
+            if not line:
+                break
+            req: RpcRequest | None = None
+            try:
+                req = decode_request(line)
+                result = await disp.dispatch(ctx, req.method, req.params)
+                response: RpcOk | RpcErr = RpcOk(id=req.id, result=result)
+            except RpcFailure as exc:
+                response = RpcErr(
+                    id=req.id if req else "",
+                    error=RpcError(code=exc.code, message=exc.message, retry_after=exc.retry_after),
+                )
+            except Exception as exc:
+                log.exception("请求处理崩溃")
+                response = RpcErr(
+                    id=req.id if req else "",
+                    error=RpcError(code="internal", message=f"{type(exc).__name__}: {exc}"),
+                )
+            await _respond(writer, response)
+    except (asyncio.IncompleteReadError, ConnectionError, OSError):
+        pass
+    finally:
+        writer.close()
+        with contextlib.suppress(OSError):
+            await writer.wait_closed()
+        log.debug("客户端断开：%s", peer)
+
+
+def _prepare_socket(path: Path) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.exists():
+        path.unlink()  # 调用方（lifecycle.ensure）保证无存活 daemon 后才拉起
+
+
+async def run_daemon(
+    *,
+    socket_path: Path | None = None,
+    connections_path: Path | None = None,
+    ledger_path: Path | None = None,
+    known_hosts_path: Path | None = None,
+    dispatcher: Dispatcher | None = None,
+) -> None:
+    """daemon 主入口（`python -m clu.daemon`）。"""
+    socket = socket_path or C.daemon_socket()
+    log_path = C.daemon_log()
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    logging.basicConfig(
+        filename=log_path,
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s %(message)s",
+    )
+
+    store = ConfigStore(connections_path or C.connections_path())
+    known_hosts = KnownHosts(known_hosts_path or C.known_hosts_path())
+    pool = ConnectionPool(
+        lambda: store.load().connections,
+        make_asyncssh_connector(known_hosts),
+    )
+    ledger = Ledger(ledger_path or C.ledger_path())
+    try:
+        await ledger.open()
+    except Exception as exc:
+        log.warning("留痕库打开失败（继续运行，不记录）：%s", exc)
+
+    ctx = DaemonContext(store=store, pool=pool, ledger=ledger, socket_path=socket)
+    disp = dispatcher or default_dispatcher
+    _prepare_socket(socket)
+    server = await asyncio.start_unix_server(
+        lambda r, w: asyncio.create_task(handle_client(ctx, disp, r, w)), path=str(socket)
+    )
+    socket.chmod(0o600)
+    log.info("daemon 就绪 pid=%s socket=%s", os.getpid(), socket)
+
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, ctx.shutdown.set)
+    try:
+        await ctx.shutdown.wait()
+    finally:
+        log.info("daemon 退出")
+        server.close()
+        await server.wait_closed()
+        await pool.close()
+        await ledger.close()
+        if socket.exists():
+            socket.unlink()
+
+
+def daemon_alive(socket_path: Path | None = None, timeout: float = 1.5) -> bool:
+    """同步探测 daemon 是否存活（ping）。可在事件循环内调用（自动卸载到线程）。"""
+    from clu.client import CluClient
+
+    path = socket_path or C.daemon_socket()
+
+    async def _probe() -> bool:
+        try:
+            async with CluClient(path, timeout=timeout) as client:
+                result = await client.request("ping")
+                return bool(result.get("pong"))
+        except CluError:
+            return False
+
+    def _run() -> bool:
+        return asyncio.run(_probe())
+
+    try:
+        asyncio.get_running_loop()
+    except RuntimeError:
+        return _run()
+    with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+        return executor.submit(_run).result()
+
+
+def ensure_daemon(
+    *, socket_path: Path | None = None, wait_timeout: float = C.ENSURE_WAIT_TIMEOUT
+) -> dict[str, Any]:
+    """不在运行则拉起（detached 子进程），等待就绪。"""
+    import subprocess
+    import sys
+    import time
+
+    path = socket_path or C.daemon_socket()
+    if daemon_alive(path):
+        return {"started": False, "alive": True, "socket": str(path)}
+    if path.exists():
+        path.unlink()
+    log_file = C.daemon_log()
+    log_file.parent.mkdir(parents=True, exist_ok=True)
+    with log_file.open("ab") as fh:
+        proc = subprocess.Popen(
+            [sys.executable, "-m", "clu.daemon"],
+            stdin=subprocess.DEVNULL,
+            stdout=fh,
+            stderr=fh,
+            start_new_session=True,
+            close_fds=True,
+        )
+    deadline = time.monotonic() + wait_timeout
+    while time.monotonic() < deadline:
+        if daemon_alive(path):
+            return {"started": True, "alive": True, "pid": proc.pid, "socket": str(path)}
+        if proc.poll() is not None:
+            raise CluError(
+                "internal", f"daemon 启动即退出（code={proc.returncode}），日志：{log_file}"
+            )
+        time.sleep(0.1)
+    proc.terminate()
+    raise CluError("internal", f"daemon {wait_timeout}s 内未就绪，日志：{log_file}")
