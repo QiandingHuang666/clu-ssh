@@ -65,6 +65,8 @@ clu connection  import [--overwrite]     从 ~/.ssh/config 一次性导入
                remove LABEL | list | check LABEL
 clu resources LABEL [--partition P] [--cpu-free|--cpu-gpu-free|--fully-idle]
                             [--gpu-only] [--nodes]       集群资源余量（分区/节点的 CPU+GPU）
+clu alloc    LABEL [--gpu|--cpu] [--gpus N] [--cpus N] [-p 分区] [--purpose 名]
+                                            抢占资源（默认 GPU 优先回退 CPU）
 clu exec     LABEL COMMAND... [--timeout]   远程执行（受安全门约束）
 clu session  list [LABEL]                 tmux 托管会话
 clu attach   LABEL PURPOSE                接入托管会话的 tmux（交互式）
@@ -92,7 +94,7 @@ claude mcp add clu -- clu-mcp
 | ○ `resources` | **资源余量**：每分区 CPU/GPU 的总量/已占/空闲与节点数（单次往返，数据源为节点 AllocTRES 权威值）。一开始就能限定范围：`filter=cpu_free`（有空闲 CPU）、`cpu_gpu_free`（CPU 和 GPU 都有空闲）、`fully_idle`（CPU+GPU 全空闲），`gpu_only=true` 只看有 GPU 的节点（可叠加）；带过滤自动附节点明细 |
 | `submit` / `cancel` | 提交脚本（base64 上传）/ 取消作业 |
 | ○ `log` | 作业 stdout（自动定位路径并 tail） |
-| `alloc` | **申请交互式资源并直接执行**：tmux 内 salloc + `sleep infinity` 保活；"抢卡"传 `preempt=true`（分区走 profile） |
+| `alloc` | **抢占接口（自动选择，无需先查询）**：resource 缺省 = GPU 优先、无空闲 GPU 回退 CPU；`resource=gpu/cpu` 只抢该类；`gpus`/`cpus`/`partition` 可指定。分区按单节点余量排名、提交被弹回自动轮换候选。granted 后 `clu attach` 即入计算节点 shell |
 | ○ `session_list` / ○ `session_info` / `session_release` | 托管会话查看与释放 |
 | `upload` / `download` | SFTP 传输（双侧父目录自动创建） |
 | ○ `ledger_query` | 检索历史执行（跨会话记忆） |
@@ -104,12 +106,12 @@ claude mcp add clu -- clu-mcp
 > "把这个训练脚本提交到 gzu 的 gpu 分区，2 张卡"
 > "job 12345 的日志尾部 100 行"
 
-**抢卡并保活**：
-> "用 clu 抢一张 A100" → `alloc(gpus=1, partition=...)` → tmux 内
-> `salloc --gres=gpu:1 ... srun bash` → 分配到手后一直占住；
-> `clu attach cluster-r train-a100` **直接落在计算节点的 shell**（exit 即释放）。
-> 用完 "释放 train-a100 会话"（session_release）。
-> `preempt=true` 时分区默认取 profile 的 `preempt_partition`。
+**抢卡 / 抢资源**（一个接口，自动选择）：
+> "用 clu 抢一张卡" → `alloc()`（默认 GPU 优先，无空闲 GPU 自动回退 CPU）
+> "抢 2 张 A100" → `alloc(gpus=2)`；"抢 8 核 CPU" → `alloc(resource="cpu", cpus=8)`
+> 分区自动选（单节点余量排名）；显式 `partition=` 则直用。
+> granted 后 `clu attach cluster-r <purpose>` **直接落计算节点 shell**，exit 即释放；
+> 用完 "释放 xxx 会话"（session_release）。忙分区提交被弹回时自动轮换候选分区重试。
 
 **断线续传场景**：alloc 会话在远端 tmux 里，笔记本断网、换地方、
 重启 Claude Code 都不影响；`clu session list` 随时可查。
