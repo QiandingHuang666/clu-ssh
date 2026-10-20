@@ -8,6 +8,7 @@ SSH 会话保持与管理 + Slurm 集群 / 普通服务器的 AI agent 能力层
 > 状态：M0 骨架阶段，尚未发布。设计共识与里程碑见 [DESIGN.md](DESIGN.md)。
 
 总体架构图（交互式，明暗主题）：[docs/architecture.html](docs/architecture.html)
+使用说明：[docs/usage.md](docs/usage.md)
 
 ## 安装（计划）
 

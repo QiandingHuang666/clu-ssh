@@ -167,6 +167,64 @@ def connection_list() -> None:
     console.print(table)
 
 
+@connection_app.command("add")
+def connection_add(
+    label: str = typer.Argument(..., help="连接 label（字母数字开头，可用 ._-）。"),
+    host: str = typer.Option(..., "--host", help="主机名或 IP。"),
+    user: str = typer.Option(..., "--user", help="登录用户。"),
+    port: int = typer.Option(22, "--port", help="端口。"),
+    kind: str = typer.Option("instance", "--kind", help="cluster | instance | local。"),
+    identity: str = typer.Option(
+        None, "--identity", "-i", help="私钥路径（缺省走 ssh-agent/默认 key）。"
+    ),
+    proxy: str = typer.Option(None, "--proxy", help="单级跳板：另一连接的 label。"),
+    profile: str = typer.Option(None, "--profile", help="定制 profile 名。"),
+    overwrite: bool = typer.Option(False, "--overwrite", help="同名覆盖。"),
+) -> None:
+    """手动添加连接（Slurm 集群记得 --kind cluster）。"""
+    from clu.config.store import ConnectionConfig
+
+    if kind not in ("cluster", "instance", "local"):
+        _fail(f"kind 必须是 cluster/instance/local，收到：{kind}")
+        return
+    try:
+        store = ConfigStore(connections_path())
+        written = store.add_connection(
+            ConnectionConfig(
+                label=label,
+                kind=kind,
+                host=host,
+                port=port,
+                user=user,
+                identity=identity,
+                proxy=proxy,
+                profile=profile,
+            ),
+            overwrite=overwrite,
+        )
+    except (ConfigError, ValueError) as exc:
+        _fail(f"添加失败：{exc}")
+        return
+    if written:
+        console.print(f"[green]已添加[/green] {label}（{kind} {host}:{port}）")
+    else:
+        console.print(f"[yellow]已存在[/yellow] {label}（--overwrite 覆盖）")
+
+
+@connection_app.command("remove")
+def connection_remove(label: str) -> None:
+    """删除连接条目。"""
+    try:
+        removed = ConfigStore(connections_path()).remove_connection(label)
+    except ConfigError as exc:
+        _fail(f"删除失败：{exc}")
+        return
+    if removed:
+        console.print(f"已删除 {label}")
+    else:
+        _fail(f"不存在：{label}")
+
+
 @connection_app.command("check")
 def connection_check(label: str) -> None:
     """探测一条连接：经 daemon 连接池建立 SSH 并执行 true。"""
