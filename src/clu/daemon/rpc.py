@@ -219,6 +219,19 @@ async def _slurm_status(ctx: DaemonContext, params: dict[str, Any]) -> dict[str,
     return await slurm.cluster_status(_runner(ctx, label))
 
 
+@dispatcher.method("slurm.resources")
+async def _slurm_resources(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    """节点级 + 分区级 CPU/GPU 余量；可按 partition/only_free/only_idle 过滤。"""
+    label = str(params["label"])
+    _require_cluster(ctx, label)
+    return await slurm.resources(
+        _runner(ctx, label),
+        partition=params.get("partition"),
+        only_free=bool(params.get("only_free")),
+        only_idle=bool(params.get("only_idle")),
+    )
+
+
 @dispatcher.method("slurm.submit")
 async def _slurm_submit(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
     label = str(params["label"])

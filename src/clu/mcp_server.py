@@ -54,6 +54,34 @@ async def slurm_status(connection: str) -> dict[str, Any]:
     return await _call("slurm.status", {"label": connection})
 
 
+@server.tool(name="resources", annotations=_READONLY)
+async def resources(
+    connection: str,
+    partition: str | None = None,
+    only_free: bool = False,
+    only_idle: bool = False,
+) -> dict[str, Any]:
+    """查询集群资源余量：每个节点与每个分区的 CPU/GPU（总量/已占/空闲）、完全空闲节点数。
+
+    "有什么卡空着/哪些节点空着/资源够不够"这类问题用这个一次拿全，不要自己拼 sinfo/scontrol。
+
+    Args:
+        connection: cluster 连接 label
+        partition: 只看该分区
+        only_free: 只看有空闲 CPU 或 GPU 的节点
+        only_idle: 只看完全空闲（IDLE）的节点
+    """
+    return await _call(
+        "slurm.resources",
+        {
+            "label": connection,
+            "partition": partition,
+            "only_free": only_free,
+            "only_idle": only_idle,
+        },
+    )
+
+
 @server.tool(name="submit", annotations=_WRITE)
 async def slurm_submit(connection: str, script: str) -> dict[str, Any]:
     """提交 Slurm 批处理作业：脚本文本经 base64 上传后 sbatch，返回 job_id。"""

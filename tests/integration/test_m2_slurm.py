@@ -67,3 +67,44 @@ async def test_slurm_tools_over_daemon(sshd: dict, tmp_path, monkeypatch) -> Non
         async with CluClient() as client:
             await client.request("server.shutdown")
         __import__("shutil").rmtree(rt, ignore_errors=True)
+
+
+async def test_resources_tool(sshd: dict, tmp_path, monkeypatch) -> None:
+    """resources：节点级/分区级 CPU+GPU 聚合与过滤（假 slurm 数据）。"""
+    import os
+    import shutil
+    from pathlib import Path
+
+    from clu.config.store import ConfigStore, ConnectionConfig
+    from clu.constants import connections_path
+    from clu.daemon.server import ensure_daemon
+
+    rt = Path(f"/tmp/clu-it7-rt-{os.getpid()}")
+    monkeypatch.setenv("CLU_RUNTIME_DIR", str(rt))
+    monkeypatch.setenv("CLU_CONFIG_DIR", str(tmp_path / "cfg2"))
+    monkeypatch.setenv("CLU_DATA_DIR", str(tmp_path / "data2"))
+    store = ConfigStore(connections_path())
+    store.add_connection(
+        ConnectionConfig(
+            label="cl",
+            kind="cluster",
+            host=str(sshd["host"]),
+            port=int(sshd["port"]),
+            user="tester",
+            identity=str(sshd["identity"]),
+        )
+    )
+    ensure_daemon()
+    try:
+        async with CluClient(timeout=60) as client:
+            result = await client.request("slurm.resources", {"label": "cl"})
+            nodes = {n["node"]: n for n in result["nodes"]}
+            assert nodes["gpu01"]["gpus"]["A100"]["free"] == 6
+            assert nodes["gpu02"]["fully_idle"] is True
+            assert result["partitions"]["gpu"]["gpus"]["A100"]["total"] == 16
+            idle = await client.request("slurm.resources", {"label": "cl", "only_idle": True})
+            assert {n["node"] for n in idle["nodes"]} == {"gpu02", "cpu01"}
+    finally:
+        async with CluClient() as client:
+            await client.request("server.shutdown")
+        shutil.rmtree(rt, ignore_errors=True)

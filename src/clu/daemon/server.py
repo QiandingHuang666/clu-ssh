@@ -6,6 +6,7 @@ import contextlib
 import logging
 import os
 import signal
+import time
 from pathlib import Path
 from typing import Any
 
@@ -46,11 +47,27 @@ async def handle_client(
             if not line:
                 break
             req: RpcRequest | None = None
+            started = 0.0
             try:
                 req = decode_request(line)
+                started = time.monotonic()
                 result = await disp.dispatch(ctx, req.method, req.params)
+                log.info(
+                    "rpc %s label=%s ok %.0fms",
+                    req.method,
+                    req.params.get("label", "-"),
+                    (time.monotonic() - started) * 1000,
+                )
                 response: RpcOk | RpcErr = RpcOk(id=req.id, result=result)
             except RpcFailure as exc:
+                if req:
+                    log.info(
+                        "rpc %s label=%s err %s %.0fms",
+                        req.method,
+                        req.params.get("label", "-"),
+                        exc.code,
+                        (time.monotonic() - started) * 1000,
+                    )
                 response = RpcErr(
                     id=req.id if req else "",
                     error=RpcError(code=exc.code, message=exc.message, retry_after=exc.retry_after),

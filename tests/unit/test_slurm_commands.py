@@ -35,8 +35,15 @@ async def test_cluster_status_counts() -> None:
 
         async def __call__(self, command: str, *, timeout: float | None = None) -> ExecResult:
             self.calls.append(command)
+            sep = "---CLUSEP---"
             if command.startswith("sinfo"):
-                return ExecResult(command, 0, "gpu|up|4|idle|8/64|512G|gpu:A100:8\n", "", 1)
+                return ExecResult(
+                    command,
+                    0,
+                    f"gpu|up|4|idle|8/64|512G|gpu:A100:8\n{sep}\nRUNNING\nRUNNING\nPENDING\n",
+                    "",
+                    1,
+                )
             return ExecResult(command, 0, "RUNNING\nRUNNING\nPENDING\n", "", 1)
 
     status = await slurm.cluster_status(SwitchRunner())  # type: ignore[arg-type]

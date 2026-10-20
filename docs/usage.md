@@ -80,13 +80,14 @@ claude mcp add --scope user clu -- /path/to/clu-mcp     # 源码安装用 .venv/
 claude mcp add clu -- clu-mcp
 ```
 
-接入后 14 个工具（带 ○ 的只读，可在 Claude Code 权限设置里配免确认）：
+接入后 15 个工具（带 ○ 的只读，可在 Claude Code 权限设置里配免确认）：
 
 | 工具 | 说明 |
 |---|---|
 | ○ `connection_list` | 连接与连接池健康状态 |
 | `exec` | 远程执行单条命令（安全门在 server 端强制生效） |
 | ○ `jobs` / ○ `status` | 作业列表 / 分区与队列概览（需 cluster 连接） |
+| ○ `resources` | **资源余量一次拿全**：每节点+每分区 CPU/GPU 的总量/已占/空闲、完全空闲节点数；可按分区过滤、只看有空闲/完全空闲的节点（单次往返） |
 | `submit` / `cancel` | 提交脚本（base64 上传）/ 取消作业 |
 | ○ `log` | 作业 stdout（自动定位路径并 tail） |
 | `alloc` | **申请交互式资源并直接执行**：tmux 内 salloc + `sleep infinity` 保活；"抢卡"传 `preempt=true`（分区走 profile） |
