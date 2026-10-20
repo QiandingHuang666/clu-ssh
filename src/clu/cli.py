@@ -337,6 +337,7 @@ def resources_cmd(
                 "partition": partition,
                 "only_free": only_free,
                 "only_idle": only_idle,
+                "include_nodes": nodes,
             },
         )
     except CluError as exc:

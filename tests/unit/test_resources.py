@@ -5,23 +5,21 @@ from clu.ssh.connection import ExecResult
 
 NODES_SCONTROL = (
     " NodeName=gpu01 CPUAlloc=8 CPUTot=64 RealMemory=512000 AllocMem=256000 State=MIXED"
-    " Gres=gpu:A100:8(S:0-1) Partitions=gpu \n"
+    " AllocTRES=cpu=8,gres/gpu=2 Gres=gpu:A100:8(S:0-1) Partitions=gpu \n"
     " NodeName=gpu02 CPUAlloc=0 CPUTot=64 RealMemory=512000 AllocMem=0 State=IDLE"
     " Gres=gpu:A100:8(S:0-1) Partitions=gpu \n"
     " NodeName=gpu03 CPUAlloc=64 CPUTot=64 RealMemory=512000 AllocMem=512000 State=ALLOCATED"
-    " Gres=gpu:4090:4(S:0-1) Partitions=gpu2 \n"
+    " AllocTRES=cpu=64,gres/gpu:4090=4 Gres=gpu:4090:4(S:0-1) Partitions=gpu2 \n"
     " NodeName=cpu01 CPUAlloc=0 CPUTot=48 RealMemory=256000 AllocMem=0 State=IDLE"
     " Gres=(null) Partitions=cpu \n"
     " NodeName=bad01 CPUAlloc=0 CPUTot=48 RealMemory=256000 AllocMem=0 State=DOWN+DRAIN"
-    " Gres=gpu:A100:8 Partitions=gpu \n"
+    " AllocTRES= Gres=gpu:A100:8 Partitions=gpu \n"
 )
-JOBS_RUNNING = "gpu01|gpu:A100:2|16\ngpu03|gpu:4090:4|64\n"
-SEP = "---CLUSEP---"
 
 
 def make_runner() -> object:
     async def run(command: str, *, timeout: float | None = None) -> ExecResult:
-        return ExecResult(command, 0, NODES_SCONTROL + SEP + "\n" + JOBS_RUNNING, "", 1)
+        return ExecResult(command, 0, NODES_SCONTROL, "", 1)
 
     return run
 
@@ -43,7 +41,7 @@ def test_parse_gres() -> None:
 
 
 async def test_resources_aggregation() -> None:
-    result = await resources(make_runner())  # type: ignore[arg-type]
+    result = await resources(make_runner(), include_nodes=True)  # type: ignore[arg-type]
     nodes = {n["node"]: n for n in result["nodes"]}
     assert nodes["gpu01"]["cpu"] == {"total": 64, "allocated": 8, "free": 56}
     assert nodes["gpu01"]["gpus"]["A100"]["free"] == 6  # 8 - 运行作业 2
@@ -55,7 +53,11 @@ async def test_resources_aggregation() -> None:
     parts = result["partitions"]
     assert parts["gpu"]["nodes"] == 3
     assert parts["gpu"]["idle_nodes"] == 1
-    assert parts["gpu"]["gpus"]["A100"] == {"total": 24, "allocated": 2, "free": 22}
+    assert parts["gpu"]["gpus"]["A100"] == {
+        "total": 24,
+        "allocated": 2,
+        "free": 22,
+    }  # 2 来自 AllocTRES gres/gpu=2
     assert parts["gpu2"]["gpus"]["4090"]["free"] == 0
     assert parts["cpu"]["cpu"]["free"] == 48
 
@@ -74,3 +76,21 @@ async def test_resources_filters() -> None:
 
     idle_gpu = await resources(base, partition="gpu", only_idle=True)  # type: ignore[arg-type]
     assert [n["node"] for n in idle_gpu["nodes"]] == ["gpu02"]
+
+
+async def test_resources_compact_by_default() -> None:
+    """默认紧凑：nodes 为空、node_count 齐全。"""
+    result = await resources(make_runner())  # type: ignore[arg-type]
+    assert result["nodes"] == []
+    assert result["node_count"] == 5
+    assert "AllocTRES" in str(result["note"])
+
+
+def test_alloc_tres_typeless_vs_typed() -> None:
+    from clu.slurm.commands import _alloc_tres_gpus
+
+    assert _alloc_tres_gpus("cpu=8,gres/gpu=2", {"A100": 8}) == {"A100": 2}
+    assert _alloc_tres_gpus("cpu=64,gres/gpu:4090=4", {"4090": 4}) == {"4090": 4}
+    # 无型号 + 多型号：均摊
+    assert _alloc_tres_gpus("gres/gpu=3", {"a": 2, "b": 2}) in ({"a": 2, "b": 1}, {"a": 1, "b": 2})
+    assert _alloc_tres_gpus("cpu=48", {"a": 2}) == {}

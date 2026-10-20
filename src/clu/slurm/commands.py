@@ -37,8 +37,8 @@ _PARTITION_FORMAT = "%P|%a|%D|%T|%C|%m|%G"
 _SEPARATOR = "---CLUSEP---"
 # 两段：sinfo 分区表 | 全队列状态
 _STATUS_CMD = f"sinfo -h -o '{_PARTITION_FORMAT}'; echo {_SEPARATOR}; squeue -h -o '%T'"
-# 两段：节点明细（scontrol）| 运行中作业资源
-_RESOURCES_CMD = "scontrol show nodes -o; echo " + _SEPARATOR + "; squeue -h -t R -o '%N|%b|%C'"
+# 节点明细单命令；AllocTRES 为权威已占数据源（squeue %b 在部分集群恒为 N/A）
+_RESOURCES_CMD = "scontrol show nodes -o"
 
 _SBATCH_JOB_ID = re.compile(r"Submitted batch job (\d+)")
 
@@ -250,12 +250,41 @@ def _gpu_allocated_by_node(job_lines: list[str]) -> dict[str, dict[str, int]]:
     return out
 
 
+def _alloc_tres_gpus(alloc_tres: str, gres_total: dict[str, int]) -> dict[str, int]:
+    """解析 AllocTRES 的 GPU 已占：优先带型号（gres/gpu:a10=1），
+    无型号（gres/gpu=2）按节点型号摊（单型号精确，多型号均摊）。"""
+    typed: dict[str, int] = {}
+    typeless = 0
+    for item in alloc_tres.split(","):
+        item = item.strip()
+        if item.startswith("gres/gpu:"):
+            key, _, value = item.partition("=")
+            if value.isdigit():
+                gpu_type = key.partition(":")[2] or "_"
+                typed[gpu_type] = typed.get(gpu_type, 0) + int(value)
+        elif item.startswith("gres/gpu="):
+            value = item.partition("=")[2]
+            if value.isdigit():
+                typeless += int(value)
+    if typed:
+        return typed
+    if typeless and gres_total:
+        types = list(gres_total)
+        base, rem = divmod(typeless, len(types))
+        out = dict.fromkeys(types, base)
+        for t in types[:rem]:
+            out[t] += 1
+        return out
+    return {}
+
+
 async def resources(
     runner: Runner,
     *,
     partition: str | None = None,
     only_free: bool = False,
     only_idle: bool = False,
+    include_nodes: bool = False,
 ) -> dict[str, object]:
     """节点级 + 分区级的 CPU/GPU 余量，单次往返。
 
@@ -263,10 +292,13 @@ async def resources(
     - only_free：只看有空闲 CPU 或 GPU 的可用节点；only_idle：只看完全空闲（IDLE）节点
     - partition：按分区过滤（节点属多分区时命中即算）
     """
-    parts = _sections((await _run(runner, _RESOURCES_CMD, timeout=60.0)).stdout)
-    node_lines = parts[0] if parts else []
-    job_lines = parts[1] if len(parts) > 1 else []
-    gpu_alloc = _gpu_allocated_by_node(job_lines)
+    node_lines = (await _run(runner, _RESOURCES_CMD, timeout=60.0)).stdout.splitlines()
+    # AllocTRES（slurm 19.05+）为权威已占来源；缺失时退回运行作业估算
+    has_alloc_tres = any("AllocTRES=" in line for line in node_lines)
+    gpu_alloc: dict[str, dict[str, int]] = {}
+    if not has_alloc_tres:
+        legacy = await _run(runner, "squeue -h -t R -o '%N|%b'")
+        gpu_alloc = _gpu_allocated_by_node(legacy.stdout.splitlines())
 
     rows: list[_NodeRow] = []
     for line in node_lines:
@@ -282,9 +314,14 @@ async def resources(
             allocated=int(f.get("CPUAlloc", "0") or 0),
         )
         cpu.free = max(0, cpu.total - cpu.allocated)
+        gres_total = parse_gres(f.get("Gres", ""))
+        if has_alloc_tres:
+            allocated = _alloc_tres_gpus(f.get("AllocTRES", ""), gres_total)
+        else:
+            allocated = gpu_alloc.get(name, {})
         gpus: dict[str, _Triple] = {}
-        for gpu_type, total in parse_gres(f.get("Gres", "")).items():
-            used = gpu_alloc.get(name, {}).get(gpu_type, 0)
+        for gpu_type, total in gres_total.items():
+            used = allocated.get(gpu_type, 0)
             gpus[gpu_type] = _Triple(total=total, allocated=used, free=max(0, total - used))
         rows.append(
             _NodeRow(
@@ -328,11 +365,19 @@ async def resources(
             for gpu_type, g in r.gpus.items():
                 bucket.gpus.setdefault(gpu_type, _Triple()).add(g)
 
+    node_payload: list[dict[str, object]] = []
+    if include_nodes or partition or only_free or only_idle:
+        node_payload = [r.as_dict() for r in rows]
     return {
-        "nodes": [r.as_dict() for r in rows],
+        "nodes": node_payload,
+        "node_count": len(rows),
         "partitions": {k: v.as_dict() for k, v in sorted(agg.items())},
         "filters": {"partition": partition, "only_free": only_free, "only_idle": only_idle},
-        "note": "GPU 已占按运行作业估算（均摊到节点）；CPU 取 scontrol 权威值",
+        "note": (
+            "GPU/CPU 已占取节点 AllocTRES（权威值）"
+            if has_alloc_tres
+            else "本集群无 AllocTRES：GPU 已占按运行作业估算"
+        ),
     }
 
 

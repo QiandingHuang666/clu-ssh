@@ -229,6 +229,7 @@ async def _slurm_resources(ctx: DaemonContext, params: dict[str, Any]) -> dict[s
         partition=params.get("partition"),
         only_free=bool(params.get("only_free")),
         only_idle=bool(params.get("only_idle")),
+        include_nodes=bool(params.get("include_nodes")),
     )
 
 

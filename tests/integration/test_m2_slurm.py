@@ -97,7 +97,7 @@ async def test_resources_tool(sshd: dict, tmp_path, monkeypatch) -> None:
     ensure_daemon()
     try:
         async with CluClient(timeout=60) as client:
-            result = await client.request("slurm.resources", {"label": "cl"})
+            result = await client.request("slurm.resources", {"label": "cl", "include_nodes": True})
             nodes = {n["node"]: n for n in result["nodes"]}
             assert nodes["gpu01"]["gpus"]["A100"]["free"] == 6
             assert nodes["gpu02"]["fully_idle"] is True

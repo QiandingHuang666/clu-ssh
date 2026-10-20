@@ -60,16 +60,20 @@ async def resources(
     partition: str | None = None,
     only_free: bool = False,
     only_idle: bool = False,
+    include_nodes: bool = False,
 ) -> dict[str, Any]:
-    """查询集群资源余量：每个节点与每个分区的 CPU/GPU（总量/已占/空闲）、完全空闲节点数。
+    """查询集群资源余量：每分区 CPU/GPU 的总量/已占/空闲与节点数。
 
-    "有什么卡空着/哪些节点空着/资源够不够"这类问题用这个一次拿全，不要自己拼 sinfo/scontrol。
+    默认紧凑视图，足够回答"什么卡空着"；需要节点明细传 include_nodes，
+    或用 partition/only_free/only_idle 过滤（过滤自动带出命中节点）。
+    不要自己拼 sinfo/scontrol。
 
     Args:
         connection: cluster 连接 label
         partition: 只看该分区
         only_free: 只看有空闲 CPU 或 GPU 的节点
         only_idle: 只看完全空闲（IDLE）的节点
+        include_nodes: 返回中包含全部节点明细（大集群慎用，建议配合过滤）
     """
     return await _call(
         "slurm.resources",
@@ -78,6 +82,7 @@ async def resources(
             "partition": partition,
             "only_free": only_free,
             "only_idle": only_idle,
+            "include_nodes": include_nodes,
         },
     )
 
