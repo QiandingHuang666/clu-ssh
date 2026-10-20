@@ -128,7 +128,7 @@ preempt_partition = "..." # 抢占模式使用的分区
 | `exec` | connection, cmd, timeout | stdout/stderr/exit_code/时长 | M2 |
 | `jobs` | connection, state? | 结构化作业列表（squeue） | M2 |
 | `status` | connection | 分区/节点/GPU 概览（sinfo+squeue 合并单次往返） | M2 |
-| `resources` | connection, partition?, only_free?, only_idle? | 节点级+分区级 CPU/GPU 余量（总量/已占/空闲、完全空闲节点数），单次往返（验收期新增，替代 agent 自拼 sinfo/scontrol） | v1 |
+| `resources` | connection, partition?, filter?, gpu_only?, include_nodes? | 节点级+分区级 CPU/GPU 余量，单次往返。已占取节点 AllocTRES（gres/gpu 总量为准，typed 归属型号；老集群退回 squeue %b 估算并注明）。filter=cpu_free / cpu_gpu_free / fully_idle，gpu_only 可叠加；默认紧凑视图，过滤或 include_nodes 才带节点明细（验收期新增，替代 agent 自拼 sinfo/scontrol） | v1 |
 | `submit` | connection, script（文本或远端路径） | job_id | M2 |
 | `log` | connection, job_id, tail? | 日志文本 | M2 |
 | `cancel` | connection, job_id | 结果 | M2 |

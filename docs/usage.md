@@ -63,8 +63,8 @@ clu server   ensure | status | stop      daemon 生命周期
 clu connection  import [--overwrite]     从 ~/.ssh/config 一次性导入
                add LABEL --host --user [--port] [--kind] [--identity] [--proxy] [--profile]
                remove LABEL | list | check LABEL
-clu resources LABEL [--partition P] [--only-free|--only-idle] [--nodes]
-                                            集群资源余量（分区/节点的 CPU+GPU）
+clu resources LABEL [--partition P] [--cpu-free|--cpu-gpu-free|--fully-idle]
+                            [--gpu-only] [--nodes]       集群资源余量（分区/节点的 CPU+GPU）
 clu exec     LABEL COMMAND... [--timeout]   远程执行（受安全门约束）
 clu session  list [LABEL]                 tmux 托管会话
 clu attach   LABEL PURPOSE                接入托管会话的 tmux（交互式）
@@ -89,7 +89,7 @@ claude mcp add clu -- clu-mcp
 | ○ `connection_list` | 连接与连接池健康状态 |
 | `exec` | 远程执行单条命令（安全门在 server 端强制生效） |
 | ○ `jobs` / ○ `status` | 作业列表 / 分区与队列概览（需 cluster 连接） |
-| ○ `resources` | **资源余量一次拿全**：每节点+每分区 CPU/GPU 的总量/已占/空闲、完全空闲节点数；可按分区过滤、只看有空闲/完全空闲的节点（单次往返） |
+| ○ `resources` | **资源余量**：每分区 CPU/GPU 的总量/已占/空闲与节点数（单次往返，数据源为节点 AllocTRES 权威值）。一开始就能限定范围：`filter=cpu_free`（有空闲 CPU）、`cpu_gpu_free`（CPU 和 GPU 都有空闲）、`fully_idle`（CPU+GPU 全空闲），`gpu_only=true` 只看有 GPU 的节点（可叠加）；带过滤自动附节点明细 |
 | `submit` / `cancel` | 提交脚本（base64 上传）/ 取消作业 |
 | ○ `log` | 作业 stdout（自动定位路径并 tail） |
 | `alloc` | **申请交互式资源并直接执行**：tmux 内 salloc + `sleep infinity` 保活；"抢卡"传 `preempt=true`（分区走 profile） |
@@ -156,6 +156,7 @@ clu forward list && clu forward remove fwd-1
 | salloc 后 session 一直 pending | 正常排队；`clu session info` 随时看，超时会话保留 |
 | 转发不工作 | 转发绑定在连接上，连接断开后需重新 `clu forward add`（最小集限制） |
 | squeue 输出解析异常 | 各校魔改 Slurm 差异大——把 `clu exec gzu "squeue -u you"` 原始输出发给作者 |
+| 空闲 GPU 数量可疑 | `resources` 的已占取节点 AllocTRES（`scontrol show nodes -o` 里 `gres/gpu=N` 为总量）。先用 `clu exec gzu "scontrol show node <节点名> -o"` 肉眼对账；老集群无 AllocTRES 时返回值会注明是作业估算 |
 
 ## 11. 已知边界（v1）
 
