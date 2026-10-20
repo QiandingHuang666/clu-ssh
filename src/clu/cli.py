@@ -319,6 +319,72 @@ def session_list(label: str = typer.Argument(None, help="连接 label；缺省�
     console.print(table)
 
 
+@app.command("resources")
+def resources_cmd(
+    label: str = typer.Argument(..., help="cluster 连接 label。"),
+    partition: str = typer.Option(None, "--partition", "-p", help="只看该分区。"),
+    only_free: bool = typer.Option(False, "--only-free", help="只看有空闲 CPU/GPU 的节点。"),
+    only_idle: bool = typer.Option(False, "--only-idle", help="只看完全空闲（IDLE）的节点。"),
+    nodes: bool = typer.Option(False, "--nodes", help="同时列出节点明细。"),
+) -> None:
+    """集群资源余量：每分区/每节点的 CPU 与 GPU（总量/已占/空闲），单次查询。"""
+    try:
+        ensure_daemon()
+        result = _do_request(
+            "slurm.resources",
+            {
+                "label": label,
+                "partition": partition,
+                "only_free": only_free,
+                "only_idle": only_idle,
+            },
+        )
+    except CluError as exc:
+        _fail(f"查询失败：{exc.message}")
+        return
+
+    parts = result.get("partitions")
+    table = Table(title=f"{label} 资源余量")
+    for col in ("分区", "节点(空闲)", "CPU 空闲/总", "GPU 空闲/总"):
+        table.add_column(col)
+    for pname, p in parts.items() if isinstance(parts, dict) else []:
+        gpus = "  ".join(f"{g}:{v['free']}/{v['total']}" for g, v in p["gpus"].items()) or "-"
+        cpu = p["cpu"]
+        table.add_row(
+            str(pname),
+            f"{p['nodes']}({p['idle_nodes']})",
+            f"{cpu['free']}/{cpu['total']}",
+            gpus,
+        )
+    console.print(table)
+
+    if nodes:
+        raw = result.get("nodes")
+        node_rows = [dict(r) for r in raw if isinstance(r, dict)] if isinstance(raw, list) else []
+        ntable = Table(title="节点明细")
+        for col in ("节点", "状态", "CPU 空闲/总", "GPU 空闲/总", "分区"):
+            ntable.add_column(col)
+        for n in node_rows:
+            gpus = (
+                "  ".join(f"{g}:{v['free']}/{v['total']}" for g, v in n.get("gpus", {}).items())
+                or "-"
+            )
+            cpu = n.get("cpu", {})
+            state = str(n.get("state", ""))
+            style = (
+                "green" if "IDLE" in state else ("red" if not n.get("usable", True) else "yellow")
+            )
+            ntable.add_row(
+                str(n.get("node")),
+                f"[{style}]{state}[/{style}]",
+                f"{cpu.get('free')}/{cpu.get('total')}",
+                gpus,
+                ",".join(n.get("partitions") or []),
+            )
+        console.print(ntable)
+    console.print(f"[dim]{result.get('note')}[/dim]")
+
+
 @app.command("attach")
 def attach(label: str, purpose: str) -> None:
     """接入托管会话的 tmux（交互式，经系统 ssh -t）。"""

@@ -63,6 +63,8 @@ clu server   ensure | status | stop      daemon 生命周期
 clu connection  import [--overwrite]     从 ~/.ssh/config 一次性导入
                add LABEL --host --user [--port] [--kind] [--identity] [--proxy] [--profile]
                remove LABEL | list | check LABEL
+clu resources LABEL [--partition P] [--only-free|--only-idle] [--nodes]
+                                            集群资源余量（分区/节点的 CPU+GPU）
 clu exec     LABEL COMMAND... [--timeout]   远程执行（受安全门约束）
 clu session  list [LABEL]                 tmux 托管会话
 clu attach   LABEL PURPOSE                接入托管会话的 tmux（交互式）
