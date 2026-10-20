@@ -135,9 +135,7 @@ async def test_default_cpus_formula() -> None:
 
 async def test_default_cpus_capped_by_free() -> None:
     """空闲核不足时被空闲数封顶。"""
-    nodes = NODES.replace(
-        "NodeName=gc1 CPUAlloc=0 CPUTot=64", "NodeName=gc1 CPUAlloc=60 CPUTot=64"
-    )
+    nodes = NODES.replace("NodeName=gc1 CPUAlloc=0 CPUTot=64", "NodeName=gc1 CPUAlloc=60 CPUTot=64")
 
     async def run(command: str, *, timeout: float | None = None) -> ExecResult:
         if command.startswith("scontrol"):
