@@ -142,7 +142,7 @@ preempt_partition = "..." # 抢占模式使用的分区
 
 - 申请资源必须**直接执行**，禁止只返回 salloc 命令让用户手动跑；
   仅当用户明确说"先看命令"时才返回命令文本
-- "抢占 A100"等表述 → `preempt=true`：tmux 内 salloc + `sleep infinity` 保活
+- "抢占 A100"等表述 → `preempt=true`：分区默认取 profile.preempt_partition；tmux 内 `salloc --gres=gpu:N ... srun bash`——attach 即计算节点 shell，exit 即释放（`--gres` 经典语法与 `srun` 落点均为贵大真机实测结论）
 - 只读工具（jobs/status/log/ledger_query/connection_list）与写工具在 MCP 层
   分开声明，便于 Claude Code 权限配置只读免确认
 

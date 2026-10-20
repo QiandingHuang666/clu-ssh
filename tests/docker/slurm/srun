@@ -1,0 +1,9 @@
+#!/bin/sh
+# 假 srun：跳过旗标，直接在"本地计算节点"执行命令
+while [ $# -gt 0 ]; do
+  case "$1" in
+    -*) shift ;;
+    *) break ;;
+  esac
+done
+exec "$@"

@@ -33,10 +33,12 @@ def build_salloc(
     if partition:
         parts += ["-p", partition]
     if gpus:
-        parts += [f"--gpus={int(gpus)}"]
+        parts += [f"--gres=gpu:{int(gpus)}"]  # 经典语法；部分集群提交插件强制（贵大实测）
     if time_limit:
         parts += ["-t", time_limit]
-    parts += ["sh", "-c", "sleep infinity"]  # sh 而非 bash：兼容 busybox 最小镜像
+    # srun bash：落到计算节点交互 shell（集群无 SallocDefaultCommand 时 salloc 默认
+    # 本地执行，实测贵大如此）；attach 即入计算节点，exit 即释放资源
+    parts += ["srun", "--unbuffered", "bash"]
     return " ".join(shlex.quote(p) for p in parts)
 
 
@@ -101,6 +103,9 @@ async def allocate(
     while True:
         info = await _probe(runner, label, purpose)
         if info["state"] != "pending":
+            if info["state"] == "granted" and not info.get("node"):
+                await asyncio.sleep(1.0)  # Nodes ready 行略晚于 Granted，补读一次
+                info = await _probe(runner, label, purpose)
             return dict(info, partition=partition, gpus=gpus, preempt=preempt)
         if time.monotonic() >= deadline:
             return dict(

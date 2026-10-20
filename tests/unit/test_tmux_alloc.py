@@ -37,9 +37,9 @@ def test_session_name_rejects_bad_parts() -> None:
 
 def test_build_salloc() -> None:
     cmd = alloc.build_salloc(purpose="train", partition="gpu", gpus=2, time_limit="4:00:00")
-    assert cmd.startswith("salloc -J clu-train -p gpu --gpus=2 -t 4:00:00")
-    assert cmd.endswith("sh -c 'sleep infinity'")
-    assert "sleep infinity" in cmd
+    assert cmd.startswith("salloc -J clu-train -p gpu --gres=gpu:2 -t 4:00:00")
+    assert cmd.endswith("srun --unbuffered bash")
+    assert cmd.endswith("srun --unbuffered bash")
 
 
 async def test_probe_granted() -> None:

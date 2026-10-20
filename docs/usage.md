@@ -105,9 +105,11 @@ claude mcp add clu -- clu-mcp
 > "job 12345 的日志尾部 100 行"
 
 **抢卡并保活**：
-> "用 clu 抢一张 A100" → `alloc(preempt=true)` → tmux 内 salloc，
-> 分配到手后一直占住；你自己 `clu attach gzu train-a100` 上去跑代码。
-> 用完 "释放 train-a100 会话"。
+> "用 clu 抢一张 A100" → `alloc(gpus=1, partition=...)` → tmux 内
+> `salloc --gres=gpu:1 ... srun bash` → 分配到手后一直占住；
+> `clu attach cluster-r train-a100` **直接落在计算节点的 shell**（exit 即释放）。
+> 用完 "释放 train-a100 会话"（session_release）。
+> `preempt=true` 时分区默认取 profile 的 `preempt_partition`。
 
 **断线续传场景**：alloc 会话在远端 tmux 里，笔记本断网、换地方、
 重启 Claude Code 都不影响；`clu session list` 随时可查。
@@ -154,6 +156,8 @@ clu forward list && clu forward remove fwd-1
 | 连接处于退避期（`retry_after`） | 刚失败过，等提示秒数或 `clu server restart`（stop+ensure） |
 | `Host key ... changed` | 主机密钥变了。确认是重装系统等正当原因后，删掉 `~/.config/clu/known_hosts` 对应行 |
 | salloc 后 session 一直 pending | 正常排队；`clu session info` 随时看，超时会话保留 |
+| salloc 报 "--gres=gpu:N must be input" | 集群提交插件强制经典语法——clu 已内置 `--gres=gpu:N`（贵大实测） |
+| attach 后 hostname 是登录节点 | 已修复：clu 用 `srun bash` 落计算节点（无 SallocDefaultCommand 的集群 salloc 默认本地执行） |
 | 转发不工作 | 转发绑定在连接上，连接断开后需重新 `clu forward add`（最小集限制） |
 | squeue 输出解析异常 | 各校魔改 Slurm 差异大——把 `clu exec gzu "squeue -u you"` 原始输出发给作者 |
 | 空闲 GPU 数量可疑 | `resources` 的已占取节点 AllocTRES（`scontrol show nodes -o` 里 `gres/gpu=N` 为总量）。先用 `clu exec gzu "scontrol show node <节点名> -o"` 肉眼对账；老集群无 AllocTRES 时返回值会注明是作业估算 |
