@@ -221,14 +221,15 @@ async def _slurm_status(ctx: DaemonContext, params: dict[str, Any]) -> dict[str,
 
 @dispatcher.method("slurm.resources")
 async def _slurm_resources(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
-    """节点级 + 分区级 CPU/GPU 余量；可按 partition/only_free/only_idle 过滤。"""
+    """节点级 + 分区级 CPU/GPU 余量；partition / filter（cpu_free|cpu_gpu_free|
+    fully_idle）/ gpu_only / include_nodes 从一开始就能限定查看范围。"""
     label = str(params["label"])
     _require_cluster(ctx, label)
     return await slurm.resources(
         _runner(ctx, label),
         partition=params.get("partition"),
-        only_free=bool(params.get("only_free")),
-        only_idle=bool(params.get("only_idle")),
+        flt=params.get("filter"),
+        gpu_only=bool(params.get("gpu_only")),
         include_nodes=bool(params.get("include_nodes")),
     )
 

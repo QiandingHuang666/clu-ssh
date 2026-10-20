@@ -323,11 +323,29 @@ def session_list(label: str = typer.Argument(None, help="连接 label；缺省�
 def resources_cmd(
     label: str = typer.Argument(..., help="cluster 连接 label。"),
     partition: str = typer.Option(None, "--partition", "-p", help="只看该分区。"),
-    only_free: bool = typer.Option(False, "--only-free", help="只看有空闲 CPU/GPU 的节点。"),
-    only_idle: bool = typer.Option(False, "--only-idle", help="只看完全空闲（IDLE）的节点。"),
-    nodes: bool = typer.Option(False, "--nodes", help="同时列出节点明细。"),
+    cpu_free: bool = typer.Option(False, "--cpu-free", help="只看有空闲 CPU 的节点。"),
+    cpu_gpu_free: bool = typer.Option(
+        False, "--cpu-gpu-free", help="只看 CPU 和 GPU 都有空闲的节点。"
+    ),
+    fully_idle: bool = typer.Option(False, "--fully-idle", help="只看 CPU 与 GPU 全空闲的节点。"),
+    gpu_only: bool = typer.Option(
+        False, "--gpu-only", help="只看有 GPU 的节点（可与其他条件叠加）。"
+    ),
+    nodes: bool = typer.Option(False, "--nodes", help="输出节点明细表。"),
 ) -> None:
-    """集群资源余量：每分区/每节点的 CPU 与 GPU（总量/已占/空闲），单次查询。"""
+    """集群资源余量：每分区/每节点的 CPU 与 GPU（总量/已占/空闲）。"""
+    flt = (
+        "cpu_free"
+        if cpu_free
+        else "cpu_gpu_free"
+        if cpu_gpu_free
+        else "fully_idle"
+        if fully_idle
+        else None
+    )
+    if sum(bool(x) for x in (cpu_free, cpu_gpu_free, fully_idle)) > 1:
+        _fail("--cpu-free/--cpu-gpu-free/--fully-idle 只能选一个")
+        return
     try:
         ensure_daemon()
         result = _do_request(
@@ -335,8 +353,8 @@ def resources_cmd(
             {
                 "label": label,
                 "partition": partition,
-                "only_free": only_free,
-                "only_idle": only_idle,
+                "filter": flt,
+                "gpu_only": gpu_only,
                 "include_nodes": nodes,
             },
         )
@@ -345,7 +363,8 @@ def resources_cmd(
         return
 
     parts = result.get("partitions")
-    table = Table(title=f"{label} 资源余量")
+    filters_desc = str(result.get("filters") or "")
+    table = Table(title=f"{label} 资源余量  [dim]{filters_desc}[/dim]")
     for col in ("分区", "节点(空闲)", "CPU 空闲/总", "GPU 空闲/总"):
         table.add_column(col)
     for pname, p in parts.items() if isinstance(parts, dict) else []:
@@ -359,10 +378,10 @@ def resources_cmd(
         )
     console.print(table)
 
-    if nodes:
-        raw = result.get("nodes")
-        node_rows = [dict(r) for r in raw if isinstance(r, dict)] if isinstance(raw, list) else []
-        ntable = Table(title="节点明细")
+    raw = result.get("nodes")
+    node_rows = [dict(r) for r in raw if isinstance(r, dict)] if isinstance(raw, list) else []
+    if node_rows:
+        ntable = Table(title=f"节点明细（{len(node_rows)}）")
         for col in ("节点", "状态", "CPU 空闲/总", "GPU 空闲/总", "分区"):
             ntable.add_column(col)
         for n in node_rows:

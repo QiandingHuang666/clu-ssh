@@ -58,30 +58,32 @@ async def slurm_status(connection: str) -> dict[str, Any]:
 async def resources(
     connection: str,
     partition: str | None = None,
-    only_free: bool = False,
-    only_idle: bool = False,
+    flt: str | None = None,
+    gpu_only: bool = False,
     include_nodes: bool = False,
 ) -> dict[str, Any]:
     """查询集群资源余量：每分区 CPU/GPU 的总量/已占/空闲与节点数。
 
-    默认紧凑视图，足够回答"什么卡空着"；需要节点明细传 include_nodes，
-    或用 partition/only_free/only_idle 过滤（过滤自动带出命中节点）。
-    不要自己拼 sinfo/scontrol。
+    一开始就限定查看范围（agent 与人类同款口径）：
+    flt=cpu_free（有空闲 CPU 的节点）、flt=cpu_gpu_free（CPU 和 GPU 都有空闲）、
+    flt=fully_idle（CPU 与 GPU 全空闲）；gpu_only=true 只看有 GPU 的节点（可叠加）。
+    partition 限定分区。默认紧凑（分区聚合）；带任一过滤或 include_nodes
+    才返回节点明细。不要自己拼 sinfo/scontrol。
 
     Args:
         connection: cluster 连接 label
         partition: 只看该分区
-        only_free: 只看有空闲 CPU 或 GPU 的节点
-        only_idle: 只看完全空闲（IDLE）的节点
-        include_nodes: 返回中包含全部节点明细（大集群慎用，建议配合过滤）
+        flt: cpu_free | cpu_gpu_free | fully_idle
+        gpu_only: 只看有 GPU 的节点（与其他条件叠加）
+        include_nodes: 返回全部节点明细（大集群建议配合过滤）
     """
     return await _call(
         "slurm.resources",
         {
             "label": connection,
             "partition": partition,
-            "only_free": only_free,
-            "only_idle": only_idle,
+            "filter": flt,
+            "gpu_only": gpu_only,
             "include_nodes": include_nodes,
         },
     )

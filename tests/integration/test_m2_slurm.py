@@ -102,7 +102,7 @@ async def test_resources_tool(sshd: dict, tmp_path, monkeypatch) -> None:
             assert nodes["gpu01"]["gpus"]["A100"]["free"] == 6
             assert nodes["gpu02"]["fully_idle"] is True
             assert result["partitions"]["gpu"]["gpus"]["A100"]["total"] == 16
-            idle = await client.request("slurm.resources", {"label": "cl", "only_idle": True})
+            idle = await client.request("slurm.resources", {"label": "cl", "filter": "fully_idle"})
             assert {n["node"] for n in idle["nodes"]} == {"gpu02", "cpu01"}
     finally:
         async with CluClient() as client:

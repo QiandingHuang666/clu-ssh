@@ -4,7 +4,7 @@ if [ "$1" = "show" ] && [ "$2" = "job" ]; then
   echo "JobId=$3 JobName=fake JobState=RUNNING RunTime=01:23:00 StdOut=$HOME/slurm-12345.out UserId=tester(1000)"
 fi
 if [ "$1" = "show" ] && [ "$2" = "nodes" ]; then
-  echo " NodeName=gpu01 CPUAlloc=8 CPUTot=64 RealMemory=512000 AllocMem=256000 State=MIXED AllocTRES=cpu=8,gres/gpu=2 Gres=gpu:A100:8(S:0-1) Partitions=gpu"
+  echo " NodeName=gpu01 CPUAlloc=8 CPUTot=64 RealMemory=512000 AllocMem=256000 State=MIXED AllocTRES=cpu=8,gres/gpu=2,gres/gpu:A100=1 Gres=gpu:A100:8(S:0-1) Partitions=gpu"
   echo " NodeName=gpu02 CPUAlloc=0 CPUTot=64 RealMemory=512000 AllocMem=0 State=IDLE Gres=gpu:A100:8(S:0-1) Partitions=gpu"
   echo " NodeName=cpu01 CPUAlloc=0 CPUTot=48 RealMemory=256000 AllocMem=0 State=IDLE Gres=(null) Partitions=cpu"
 fi

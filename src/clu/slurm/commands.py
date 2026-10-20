@@ -251,8 +251,13 @@ def _gpu_allocated_by_node(job_lines: list[str]) -> dict[str, dict[str, int]]:
 
 
 def _alloc_tres_gpus(alloc_tres: str, gres_total: dict[str, int]) -> dict[str, int]:
-    """解析 AllocTRES 的 GPU 已占：优先带型号（gres/gpu:a10=1），
-    无型号（gres/gpu=2）按节点型号摊（单型号精确，多型号均摊）。"""
+    """解析 AllocTRES 的 GPU 已占，按节点型号归属。
+
+    slurm 语义（实测贵大 22.05）：无型号的 gres/gpu=N 是该节点 GPU 已占
+    **总量**（含未指名型号的申请）；带型号 gres/gpu:TYPE=M 只统计显式
+    指名的那部分——两者并存时以总量为准，typed 用于归属，差额摊到节点
+    型号上（单型号精确，多型号均摊）。
+    """
     typed: dict[str, int] = {}
     typeless = 0
     for item in alloc_tres.split(","):
@@ -266,31 +271,38 @@ def _alloc_tres_gpus(alloc_tres: str, gres_total: dict[str, int]) -> dict[str, i
             value = item.partition("=")[2]
             if value.isdigit():
                 typeless += int(value)
-    if typed:
-        return typed
-    if typeless and gres_total:
-        types = list(gres_total)
-        base, rem = divmod(typeless, len(types))
-        out = dict.fromkeys(types, base)
+    if not typeless and not typed:
+        return {}
+    total_alloc = typeless if typeless else sum(typed.values())
+    out = dict(typed)
+    remainder = max(0, total_alloc - sum(typed.values()))
+    if remainder and gres_total:
+        types = [t for t in gres_total if t not in out] or list(gres_total)
+        base, rem = divmod(remainder, len(types))
+        for t in types:
+            out[t] = out.get(t, 0) + base
         for t in types[:rem]:
             out[t] += 1
-        return out
-    return {}
+    return out
+
+
+RESOURCES_FILTERS = ("cpu_free", "cpu_gpu_free", "fully_idle")
 
 
 async def resources(
     runner: Runner,
     *,
     partition: str | None = None,
-    only_free: bool = False,
-    only_idle: bool = False,
+    flt: str | None = None,
+    gpu_only: bool = False,
     include_nodes: bool = False,
 ) -> dict[str, object]:
     """节点级 + 分区级的 CPU/GPU 余量，单次往返。
 
-    - CPU 已占取 scontrol CPUAlloc（权威值）；GPU 已占按运行中作业 gres 摊到节点（估算）
-    - only_free：只看有空闲 CPU 或 GPU 的可用节点；only_idle：只看完全空闲（IDLE）节点
-    - partition：按分区过滤（节点属多分区时命中即算）
+    - CPU 已占取 scontrol CPUAlloc；GPU 已占取 AllocTRES（gres/gpu 总量为准）
+    - flt：cpu_free（有空闲 CPU）/ cpu_gpu_free（CPU 与 GPU 都有空闲）/
+      fully_idle（CPU 与 GPU 全空闲）；gpu_only：只看有 GPU 的节点（可叠加）
+    - partition：按分区过滤；过滤或 include_nodes 时返回节点明细，否则紧凑视图
     """
     node_lines = (await _run(runner, _RESOURCES_CMD, timeout=60.0)).stdout.splitlines()
     # AllocTRES（slurm 19.05+）为权威已占来源；缺失时退回运行作业估算
@@ -339,18 +351,28 @@ async def resources(
             )
         )
 
-    # 过滤
+    # 过滤：partition -> gpu_only -> 资源条件（cpu_free / cpu_gpu_free / fully_idle）
     if partition:
         want = partition.rstrip("*")
         rows = [r for r in rows if want in [p.rstrip("*") for p in r.partitions]]
-    if only_idle:
-        rows = [r for r in rows if r.fully_idle]
-    elif only_free:
+    if gpu_only:
+        rows = [r for r in rows if r.gpus]
+    if flt == "cpu_free":
+        rows = [r for r in rows if r.usable and r.cpu.free > 0]
+    elif flt == "cpu_gpu_free":
         rows = [
             r
             for r in rows
-            if r.usable and (r.cpu.free > 0 or any(g.free > 0 for g in r.gpus.values()))
+            if r.usable and r.cpu.free > 0 and any(g.free > 0 for g in r.gpus.values())
         ]
+    elif flt == "fully_idle":
+        rows = [
+            r
+            for r in rows
+            if r.usable and r.cpu.allocated == 0 and all(g.allocated == 0 for g in r.gpus.values())
+        ]
+    elif flt is not None:
+        raise ValueError(f"未知 filter：{flt}（可选 {RESOURCES_FILTERS}）")
 
     # 分区聚合（基于过滤后集合，与返回的节点列表口径一致）
     agg: dict[str, _PartAgg] = {}
@@ -366,13 +388,13 @@ async def resources(
                 bucket.gpus.setdefault(gpu_type, _Triple()).add(g)
 
     node_payload: list[dict[str, object]] = []
-    if include_nodes or partition or only_free or only_idle:
+    if include_nodes or partition or gpu_only or flt:
         node_payload = [r.as_dict() for r in rows]
     return {
         "nodes": node_payload,
         "node_count": len(rows),
         "partitions": {k: v.as_dict() for k, v in sorted(agg.items())},
-        "filters": {"partition": partition, "only_free": only_free, "only_idle": only_idle},
+        "filters": {"partition": partition, "filter": flt, "gpu_only": gpu_only},
         "note": (
             "GPU/CPU 已占取节点 AllocTRES（权威值）"
             if has_alloc_tres
