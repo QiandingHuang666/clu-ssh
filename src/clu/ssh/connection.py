@@ -233,11 +233,21 @@ def _resolve_identity(identity: str | None) -> Path | None:
     return path
 
 
+def known_hosts_id(cfg: ConnectionConfig) -> str:
+    """known_hosts 条目名（OpenSSH 语义）：22 端口记裸 host，其余记 [host]:port。
+
+    同 IP 不同端口可能是完全不同的主机（如 frp 转发到集群登录节点），必须区分。
+    """
+    return cfg.host if cfg.port == 22 else f"[{cfg.host}]:{cfg.port}"
+
+
 def make_asyncssh_connector(known_hosts: KnownHosts) -> Connector:
     """构造真实连接器：心跳、单级跳板、accept-new host key。"""
 
     async def connect(cfg: ConnectionConfig, tunnel: SSHConn | None) -> SSHConn:
-        known = known_hosts.has(cfg.host) and known_hosts.path is not None
+        # accept-new：已知主机严格校验（交给 asyncssh），未知主机首次接受并记录
+        kh_id = known_hosts_id(cfg)
+        known = known_hosts.has(kh_id) and known_hosts.path is not None
         identity = _resolve_identity(cfg.identity)
         # 注意：client_keys 不能显式传 None——asyncssh 会当作"无密钥"而非"用默认"
         options_kwargs: dict[str, object] = {}
@@ -257,7 +267,7 @@ def make_asyncssh_connector(known_hosts: KnownHosts) -> Connector:
         if not known:  # accept-new：首次连接后记录主机 key
             server_key = conn.get_server_host_key()
             if server_key is not None:
-                known_hosts.add(cfg.host, _key_line(server_key))
+                known_hosts.add(kh_id, _key_line(server_key))
         return RealSSHConn(conn)
 
     return connect

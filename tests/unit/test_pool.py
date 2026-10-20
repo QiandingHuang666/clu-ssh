@@ -142,3 +142,14 @@ async def test_connector_omits_client_keys_without_identity(monkeypatch) -> None
     with contextlib.suppress(OSError):
         await connector(cfg, None)
     assert "client_keys" not in captured
+
+
+def test_known_hosts_id_distinguishes_ports() -> None:
+    """同 IP 不同端口是不同主机（frp 转发场景），known_hosts 条目必须区分。"""
+    from clu.ssh.connection import known_hosts_id
+
+    a = ConnectionConfig(label="a", host="120.27.1.1", port=22, user="u")
+    b = ConnectionConfig(label="b", host="120.27.1.1", port=21563, user="u")
+    assert known_hosts_id(a) == "120.27.1.1"
+    assert known_hosts_id(b) == "[120.27.1.1]:21563"
+    assert known_hosts_id(a) != known_hosts_id(b)

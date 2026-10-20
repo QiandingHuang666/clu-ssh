@@ -54,7 +54,9 @@ async def test_known_hosts_recorded_then_tamper_rejected(sshd: dict, tmp_path) -
     finally:
         await pool.close()
     # 篡改 key 后必须拒绝（accept-new 语义的 strict 分支）
-    kh_path.write_text(f"{sshd['host']} ssh-ed25519 AAAAFakeTamperedKey==\n")
+    from clu.ssh.connection import known_hosts_id
+
+    kh_path.write_text(f"{known_hosts_id(cfg)} ssh-ed25519 AAAAFakeTamperedKey==\n")
     pool2 = make_pool({"t": cfg}, tmp_path)
     try:
         with pytest.raises(CluConnectionError):
