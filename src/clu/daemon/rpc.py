@@ -301,12 +301,13 @@ async def _slurm_alloc(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, 
     """抢占接口：默认 GPU 优先、无则 CPU；resource=gpu/cpu 指定类型；
     partition/gpus/cpus 可显式指定。直接执行（DESIGN §6 语义）。"""
     label = str(params["label"])
-    _require_cluster(ctx, label)
+    _cfg, profile = _require_cluster(ctx, label)
     purpose = str(params.get("purpose") or "alloc")
     info = await allocops.allocate(
         _runner(ctx, label),
         label,
         purpose=purpose,
+        default_cpus=profile.alloc_default_cpus if profile else None,
         resource=params.get("resource"),
         gpus=params.get("gpus"),
         cpus=params.get("cpus"),

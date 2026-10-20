@@ -94,7 +94,7 @@ claude mcp add clu -- clu-mcp
 | ○ `resources` | **资源余量**：每分区 CPU/GPU 的总量/已占/空闲与节点数（单次往返，数据源为节点 AllocTRES 权威值）。一开始就能限定范围：`filter=cpu_free`（有空闲 CPU）、`cpu_gpu_free`（CPU 和 GPU 都有空闲）、`fully_idle`（CPU+GPU 全空闲），`gpu_only=true` 只看有 GPU 的节点（可叠加）；带过滤自动附节点明细 |
 | `submit` / `cancel` | 提交脚本（base64 上传）/ 取消作业 |
 | ○ `log` | 作业 stdout（自动定位路径并 tail） |
-| `alloc` | **抢占接口（自动选择，无需先查询）**：resource 缺省 = GPU 优先、无空闲 GPU 回退 CPU；`resource=gpu/cpu` 只抢该类；`gpus`/`cpus`/`partition` 可指定。分区按单节点余量排名、提交被弹回自动轮换候选。granted 后 `clu attach` 即入计算节点 shell |
+| `alloc` | **抢占接口（自动选择，无需先查询）**：resource 缺省 = GPU 优先、无空闲 GPU 回退 CPU；`resource=gpu/cpu` 只抢该类；`gpus`/`cpus`/`partition` 可指定（GPU 抢占可与 cpus 组合）。分区按单节点余量（含 CPU 核数需求）排名、提交被弹回自动轮换候选。granted 后 `clu attach` 即入计算节点 shell。**CPU 核数默认策略**：GPU 抢占未指定时取 profile 的 `alloc_default_cpus`（未配置则集群 slurm 默认，通常 1 核）；CPU 抢占未指定默认 4 核 |
 | ○ `session_list` / ○ `session_info` / `session_release` | 托管会话查看与释放 |
 | `upload` / `download` | SFTP 传输（双侧父目录自动创建） |
 | ○ `ledger_query` | 检索历史执行（跨会话记忆） |

@@ -14,3 +14,5 @@ class Profile(BaseModel):
     heavy_guard: bool = True
     heavy_patterns: list[str] = Field(default_factory=list)
     preempt_partition: str | None = None
+    # GPU 抢占未显式给 cpus 时的默认核数（集群 slurm 默认通常仅 1 核）
+    alloc_default_cpus: int | None = None

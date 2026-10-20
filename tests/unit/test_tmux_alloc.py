@@ -97,3 +97,30 @@ async def test_release() -> None:
     result = await alloc.release(make_runner(), "gzu", "train")  # type: ignore[arg-type]
     assert result["released"] is True
     assert result["session"] == "clu/gzu/train"
+
+
+async def test_rank_gpu_partitions_respects_cpus() -> None:
+    """GPU 够但 CPU 核数不足的节点必须排除。"""
+    busy_cpu_nodes = NODES.replace("CPUAlloc=8", "CPUAlloc=63")  # g1 CPU 只剩 1 核
+
+    # g1 被排除后只剩 gcpu（L20 余 4、CPU 空闲）
+    async def run(command: str, *, timeout: float | None = None) -> ExecResult:
+        if command.startswith("scontrol"):
+            return ExecResult(command, 0, busy_cpu_nodes, "", 1)
+        return ExecResult(command, 0, "", "", 1)
+
+    ranked, _ = await alloc._rank_gpu_partitions(run, 1, cpus=16)  # type: ignore[arg-type]
+    assert ranked == ["gcpu"]
+
+
+async def test_allocate_gpu_with_cpus() -> None:
+    info = await alloc.allocate(make_runner(), "gzu", purpose="t9", gpus=2, cpus=16, wait=1)  # type: ignore[arg-type]
+    assert "--cpus=16" in str(info["request"])
+    assert info["cpus"] == 16
+
+
+async def test_allocate_profile_default_cpus() -> None:
+    """GPU 抢占未给 cpus 时应用 profile 默认核数。"""
+    info = await alloc.allocate(make_runner(), "gzu", purpose="t10", wait=1, default_cpus=8)  # type: ignore[arg-type]
+    assert "--cpus=8" in str(info["request"])
+    assert info["cpus"] == 8

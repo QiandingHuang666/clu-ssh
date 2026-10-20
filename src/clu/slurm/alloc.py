@@ -87,16 +87,24 @@ def _rank_partitions(
     return [p for _, p in ranked[:3]]
 
 
-async def _rank_gpu_partitions(runner: Runner, gpus: int) -> tuple[list[str], str]:
-    """CPU 与 GPU 同时空闲、单节点 GPU 数可满足的分区排名。"""
+async def _rank_gpu_partitions(
+    runner: Runner, gpus: int, cpus: int | None = None
+) -> tuple[list[str], str]:
+    """CPU 与 GPU 同时空闲、单节点 GPU 数与 CPU 核数都可满足的分区排名。"""
     data = await slurm.resources(runner, gpu_only=True, flt="cpu_gpu_free")
     nodes = cast(list[dict[str, object]], data.get("nodes") or [])
+    want_cpus = max(1, cpus or 1)
+
+    def eligible(n: dict[str, object]) -> bool:
+        cpu_free = int(cast(dict[str, int], n.get("cpu") or {}).get("free") or 0)
+        return cpu_free >= want_cpus
 
     def score(n: dict[str, object]) -> int:
         gpus_by_type = cast(dict[str, dict[str, int]], n.get("gpus") or {})
         return sum(v["free"] for v in gpus_by_type.values())
 
-    return _rank_partitions(nodes, score, max(1, gpus)), _availability_note(data)
+    filtered = [n for n in nodes if eligible(n)]
+    return _rank_partitions(filtered, score, max(1, gpus)), _availability_note(data)
 
 
 async def _rank_cpu_partitions(runner: Runner, cpus: int) -> tuple[list[str], str]:
@@ -179,6 +187,7 @@ async def allocate(
     wait: float = 120.0,
     poll_interval: float = 2.0,
     time_limit: str | None = None,
+    default_cpus: int | None = None,
 ) -> dict[str, object]:
     """抢占入口：直接执行 salloc 并轮询到授予/超时。
 
@@ -194,6 +203,9 @@ async def allocate(
         resource = "cpu" if (not gpus and cpus) else "gpu"
     # CPU 抢占不带 GPU 请求（CLI 默认 gpus=1 不得渗入）
     gpus = (gpus or 1) if resource == "gpu" else None
+    # GPU 抢占未显式给核数时用 profile 默认（集群 slurm 默认通常仅 1 核）
+    if resource == "gpu" and cpus is None and default_cpus:
+        cpus = int(default_cpus)
     shown_resource = "auto(gpu优先)" if auto_mode and resource == "gpu" else resource
     request_desc = describe_request(shown_resource, gpus, cpus, partition)
     chosen_by = "explicit" if partition is not None else ""
@@ -204,7 +216,7 @@ async def allocate(
     if partition is not None:
         candidates = [partition]
     elif resource == "gpu":
-        candidates, note = await _rank_gpu_partitions(runner, int(gpus or 1))
+        candidates, note = await _rank_gpu_partitions(runner, int(gpus or 1), cpus)
         chosen_by = "auto-gpu"
         if not candidates:
             if not auto_mode:
