@@ -239,12 +239,16 @@ def make_asyncssh_connector(known_hosts: KnownHosts) -> Connector:
     async def connect(cfg: ConnectionConfig, tunnel: SSHConn | None) -> SSHConn:
         known = known_hosts.has(cfg.host) and known_hosts.path is not None
         identity = _resolve_identity(cfg.identity)
+        # 注意：client_keys 不能显式传 None——asyncssh 会当作"无密钥"而非"用默认"
+        options_kwargs: dict[str, object] = {}
+        if identity is not None:
+            options_kwargs["client_keys"] = [str(identity)]
         options = asyncssh.SSHClientConnectionOptions(
             keepalive_interval=C.HEARTBEAT_INTERVAL,
             keepalive_count_max=C.HEARTBEAT_COUNT_MAX,
             connect_timeout=C.DEFAULT_CONNECT_TIMEOUT,
             known_hosts=str(known_hosts.path) if known else None,
-            client_keys=[str(identity)] if identity is not None else None,
+            **options_kwargs,
         )
         tunnel_arg = tunnel.raw if isinstance(tunnel, RealSSHConn) else None
         conn = await asyncssh.connect(

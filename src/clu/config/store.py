@@ -44,15 +44,27 @@ class ConfigData(BaseModel):
 
 
 class ConfigStore:
-    """基于 tomlkit 文档的就地编辑：未改动的条目（含注释）在重写后保持原样。"""
+    """基于 tomlkit 文档的就地编辑：未改动的条目（含注释）在重写后保持原样。
+
+    外部改动按 mtime 失效重载——daemon 长驻进程必须能看到
+    其他进程（clu connection import/add）写入的新连接。
+    """
 
     def __init__(self, path: Path) -> None:
         self._path = path
         self._doc: tomlkit.TOMLDocument | None = None
+        self._mtime: int | None = None
 
     # ---- 内部 ----
+    def _mtime_now(self) -> int | None:
+        try:
+            return self._path.stat().st_mtime_ns
+        except OSError:
+            return None
+
     def _document(self) -> tomlkit.TOMLDocument:
-        if self._doc is None:
+        mtime = self._mtime_now()
+        if self._doc is None or mtime != self._mtime:
             if self._path.exists():
                 try:
                     self._doc = tomlkit.parse(self._path.read_text(encoding="utf-8"))
@@ -60,11 +72,13 @@ class ConfigStore:
                     raise ConfigError(f"{self._path} 不是合法 TOML：{exc}") from exc
             else:
                 self._doc = tomlkit.document()
+            self._mtime = mtime
         return self._doc
 
     def _flush(self) -> None:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._path.write_text(tomlkit.dumps(self._document()), encoding="utf-8")
+        self._mtime = self._mtime_now()
 
     def _connection_table(self, label: str) -> tomlkit.TOMLDocument | Any:
         doc = self._document()

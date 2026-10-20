@@ -1,6 +1,7 @@
 """连接池状态机测试（注入 fake 连接器，无真实 SSH）。"""
 
 import asyncio
+import contextlib
 
 import pytest
 
@@ -116,3 +117,28 @@ async def test_background_reconnect_after_failure() -> None:
         await asyncio.sleep(0.01)
     assert state == ConnState.ONLINE.value
     await pool.close()
+
+
+async def test_connector_omits_client_keys_without_identity(monkeypatch) -> None:
+    """identity 缺省时不得把 client_keys=None 传进 options（asyncssh 会当作无密钥）。"""
+    import asyncssh
+
+    from clu.ssh.connection import KnownHosts, make_asyncssh_connector
+
+    captured: dict[str, object] = {}
+
+    class FakeOptions:
+        def __init__(self, **kw: object) -> None:
+            captured.update(kw)
+
+    async def fake_connect(*args: object, **kw: object) -> object:
+        raise OSError("stop-here")
+
+    monkeypatch.setattr(asyncssh, "SSHClientConnectionOptions", FakeOptions)
+    monkeypatch.setattr(asyncssh, "connect", fake_connect)
+
+    connector = make_asyncssh_connector(KnownHosts(None))
+    cfg = ConnectionConfig(label="x", host="h", user="u")  # 无 identity
+    with contextlib.suppress(OSError):
+        await connector(cfg, None)
+    assert "client_keys" not in captured

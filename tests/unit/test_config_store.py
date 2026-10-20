@@ -70,3 +70,16 @@ def test_corrupt_toml_raises(tmp_path: object) -> None:
     path.write_text("not [ valid toml", encoding="utf-8")  # type: ignore[arg-type]
     with pytest.raises(ConfigError, match="TOML"):
         ConfigStore(path).load()  # type: ignore[arg-type]
+
+
+def test_reload_after_external_change(tmp_path: object) -> None:
+    """daemon 场景：先加载（缓存），另一进程写入，本进程必须能看到。"""
+    path = tmp_path / "connections.toml"  # type: ignore[arg-type]
+    first = ConfigStore(path)  # type: ignore[arg-type]
+    first.add_connection(make_cfg("a"))
+    first.load()  # 缓存此刻的文档
+
+    external = ConfigStore(path)  # type: ignore[arg-type]
+    external.add_connection(make_cfg("b"))
+
+    assert "b" in first.load().connections  # mtime 失效后重载
