@@ -148,6 +148,24 @@ async def session_release(connection: str, purpose: str) -> dict[str, Any]:
     return await _call("session.release", {"label": connection, "purpose": purpose})
 
 
+@server.tool(name="upload", annotations=_WRITE)
+async def upload(connection: str, local_path: str, remote_path: str) -> dict[str, Any]:
+    """上传本地文件到远端（SFTP，远端父目录自动创建）。"""
+    return await _call(
+        "transfer.upload",
+        {"label": connection, "local_path": local_path, "remote_path": remote_path},
+    )
+
+
+@server.tool(name="download", annotations=_WRITE)
+async def download(connection: str, remote_path: str, local_path: str) -> dict[str, Any]:
+    """下载远端文件到本地（SFTP，本地父目录自动创建）。"""
+    return await _call(
+        "transfer.download",
+        {"label": connection, "remote_path": remote_path, "local_path": local_path},
+    )
+
+
 @server.tool(name="connection_list", annotations=_READONLY)
 async def connection_list() -> dict[str, Any]:
     """列出全部受管连接及连接池健康状态（label/kind/host/state）。"""

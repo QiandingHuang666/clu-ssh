@@ -72,6 +72,8 @@ async def test_mcp_stdio_tools(sshd: dict, tmp_path, monkeypatch) -> None:
                 "session_list",
                 "session_info",
                 "session_release",
+                "upload",
+                "download",
             } <= names
             by_name = {t.name: t for t in listed.tools}
             assert by_name["jobs"].annotations.read_only_hint is True

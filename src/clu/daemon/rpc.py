@@ -22,7 +22,9 @@ from clu.policy import check_exec, check_submit_script
 from clu.profiles import Profile
 from clu.protocol import ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, ERR_NOT_FOUND
 from clu.ssh.connection import CluConnectionError, ExecResult
+from clu.ssh.forward import ForwardError, ForwardManager
 from clu.ssh.pool import ConnectionPool
+from clu.transfer import sftp
 
 log = logging.getLogger("clu.daemon.rpc")
 
@@ -49,6 +51,7 @@ class DaemonContext:
     socket_path: Path
     started: float = field(default_factory=time.time)
     shutdown: asyncio.Event = field(default_factory=asyncio.Event)
+    forwards: ForwardManager = field(default_factory=ForwardManager)
 
 
 _MAX_OUTPUT_CHARS = 65536
@@ -83,6 +86,8 @@ class Dispatcher:
             raise
         except CluConnectionError as exc:
             raise RpcFailure("connection_failed", exc.message, exc.retry_after) from exc
+        except (sftp.TransferError, ForwardError) as exc:
+            raise RpcFailure("transfer_failed", str(exc)) from exc
         except KeyError as exc:
             raise RpcFailure(ERR_INVALID_PARAMS, f"缺少参数：{exc}") from exc
         except ValidationError as exc:
@@ -337,3 +342,68 @@ async def _session_release(ctx: DaemonContext, params: dict[str, Any]) -> dict[s
         summary=f"释放 alloc 会话 {purpose}: {'成功' if result['released'] else '不存在'}",
     )
     return result
+
+
+@dispatcher.method("transfer.upload")
+async def _transfer_upload(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    """上传本地文件到远端（SFTP，走连接池连接）。"""
+    label = str(params["label"])
+    _get_connection(ctx, label)
+    conn = await ctx.pool.acquire(label)
+    result = await sftp.upload(conn, str(params["local_path"]), str(params["remote_path"]))
+    await ctx.ledger.record(
+        kind="upload",
+        connection=label,
+        command=f"{result['local_path']} -> {result['remote_path']}",
+        summary=f"上传 {result['bytes']} 字节",
+    )
+    return dict(result)
+
+
+@dispatcher.method("transfer.download")
+async def _transfer_download(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    """下载远端文件到本地（SFTP）。"""
+    label = str(params["label"])
+    _get_connection(ctx, label)
+    conn = await ctx.pool.acquire(label)
+    result = await sftp.download(conn, str(params["remote_path"]), str(params["local_path"]))
+    await ctx.ledger.record(
+        kind="download",
+        connection=label,
+        command=f"{result['remote_path']} -> {result['local_path']}",
+        summary=f"下载 {result['bytes']} 字节",
+    )
+    return dict(result)
+
+
+@dispatcher.method("forward.add")
+async def _forward_add(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    """建立本地转发：127.0.0.1:<local_port|随机> -> 远端 host:port（经连接池）。"""
+    label = str(params["label"])
+    _get_connection(ctx, label)
+    row = await ctx.forwards.add(
+        label,
+        str(params["remote_host"]),
+        int(params["remote_port"]),
+        local_port=int(params.get("local_port") or 0),
+    )
+    await ctx.ledger.record(
+        kind="forward",
+        connection=label,
+        command=f"-L {row['local_port']}:{row['remote_host']}:{row['remote_port']}",
+        summary=f"转发 {row['id']}",
+    )
+    return dict(row)
+
+
+@dispatcher.method("forward.list")
+async def _forward_list(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    return {"forwards": ctx.forwards.list()}
+
+
+@dispatcher.method("forward.remove")
+async def _forward_remove(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    removed = ctx.forwards.remove(str(params["id"]))
+    if not removed:
+        raise RpcFailure(ERR_NOT_FOUND, f"未知转发：{params['id']}")
+    return {"id": params["id"], "removed": True}

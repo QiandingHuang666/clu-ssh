@@ -108,6 +108,7 @@ async def run_daemon(
         log.warning("留痕库打开失败（继续运行，不记录）：%s", exc)
 
     ctx = DaemonContext(store=store, pool=pool, ledger=ledger, socket_path=socket)
+    ctx.forwards.bind(pool.acquire)
     disp = dispatcher or default_dispatcher
     _prepare_socket(socket)
     server = await asyncio.start_unix_server(
@@ -125,6 +126,7 @@ async def run_daemon(
         log.info("daemon 退出")
         server.close()
         await server.wait_closed()
+        ctx.forwards.close_all()
         await pool.close()
         await ledger.close()
         if socket.exists():

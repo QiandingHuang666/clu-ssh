@@ -23,9 +23,11 @@ app = typer.Typer(
 connection_app = typer.Typer(help="连接配置管理。", no_args_is_help=True)
 server_app = typer.Typer(help="daemon 生命周期管理。", no_args_is_help=True)
 session_app = typer.Typer(help="tmux 托管会话。", no_args_is_help=True)
+forward_app = typer.Typer(help="本地端口转发（-L 最小集）。", no_args_is_help=True)
 app.add_typer(connection_app, name="connection")
 app.add_typer(server_app, name="server")
 app.add_typer(session_app, name="session")
+app.add_typer(forward_app, name="forward")
 
 console = Console()
 
@@ -290,6 +292,73 @@ def attach(label: str, purpose: str) -> None:
     args += [target, "tmux attach -t " + session_name(label, purpose)]
     console.print(f"[dim]{' '.join(args[: len(args) - 1])} tmux attach ...[/dim]")
     os.execvp("ssh", args)
+
+
+@forward_app.command("add")
+def forward_add(
+    label: str,
+    remote_host: str,
+    remote_port: int,
+    local_port: int = typer.Option(0, "--local-port", "-l", help="本地端口，0 为随机分配。"),
+) -> None:
+    """建立转发：本机端口 -> 远端 host:port（经连接池隧道）。"""
+    try:
+        ensure_daemon()
+        row = _do_request(
+            "forward.add",
+            {
+                "label": label,
+                "remote_host": remote_host,
+                "remote_port": remote_port,
+                "local_port": local_port,
+            },
+        )
+    except CluError as exc:
+        _fail(f"转发建立失败：{exc.message}")
+        return
+    console.print(
+        f"[green]已建立[/green] 127.0.0.1:{row.get('local_port')}"
+        f" -> {remote_host}:{remote_port}（{row.get('id')}）"
+    )
+
+
+@forward_app.command("list")
+def forward_list() -> None:
+    """列出当前转发。"""
+    try:
+        ensure_daemon()
+        result = _do_request("forward.list", {})
+    except CluError as exc:
+        _fail(f"查询失败：{exc.message}")
+        return
+    raw = result.get("forwards")
+    rows = [dict(r) for r in raw if isinstance(r, dict)] if isinstance(raw, list) else []
+    if not rows:
+        console.print("暂无转发")
+        return
+    table = Table(title="本地转发")
+    for col in ("id", "connection", "local", "remote"):
+        table.add_column(col)
+    for row in rows:
+        table.add_row(
+            str(row.get("id")),
+            str(row.get("connection")),
+            f"127.0.0.1:{row.get('local_port')}",
+            f"{row.get('remote_host')}:{row.get('remote_port')}",
+        )
+    console.print(table)
+
+
+@forward_app.command("remove")
+def forward_remove(forward_id: str) -> None:
+    """移除转发。"""
+    try:
+        ensure_daemon()
+        _do_request("forward.remove", {"id": forward_id})
+    except CluError as exc:
+        _fail(f"移除失败：{exc.message}")
+        return
+    console.print(f"已移除 {forward_id}")
 
 
 def cli_main() -> None:
