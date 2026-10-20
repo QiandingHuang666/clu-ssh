@@ -41,7 +41,7 @@ def test_describe_request_user_facing() -> None:
 
 
 async def test_rank_gpu_partitions_prefers_most_free() -> None:
-    ranked, note = await alloc._rank_gpu_partitions(make_runner(), 1)  # type: ignore[arg-type]
+    ranked, note, _hint = await alloc._rank_gpu_partitions(make_runner(), 1)  # type: ignore[arg-type]
     assert ranked[0] == "gcpu"  # ggpu 分区余 4 > gpu 分区余 2
     assert "gpu空" in note
 
@@ -109,7 +109,7 @@ async def test_rank_gpu_partitions_respects_cpus() -> None:
             return ExecResult(command, 0, busy_cpu_nodes, "", 1)
         return ExecResult(command, 0, "", "", 1)
 
-    ranked, _ = await alloc._rank_gpu_partitions(run, 1, cpus=16)  # type: ignore[arg-type]
+    ranked, _, _hint2 = await alloc._rank_gpu_partitions(run, 1, cpus=16)  # type: ignore[arg-type]
     assert ranked == ["gcpu"]
 
 
@@ -124,3 +124,25 @@ async def test_allocate_profile_default_cpus() -> None:
     info = await alloc.allocate(make_runner(), "gzu", purpose="t10", wait=1, default_cpus=8)  # type: ignore[arg-type]
     assert "--cpus=8" in str(info["request"])
     assert info["cpus"] == 8
+
+
+async def test_default_cpus_formula() -> None:
+    """默认核数 = min(节点总核//总卡, 空闲核)：g1 64 核 8 卡 -> 8；gcpu 64 核 4 卡 -> 16。"""
+    info = await alloc.allocate(make_runner(), "gzu", purpose="tf", wait=1)  # type: ignore[arg-type]
+    assert info["cpus"] == 16  # 最优节点 gcpu：64//4=16（空闲 64 不设限）
+    assert "--cpus=16" in str(info["request"])
+
+
+async def test_default_cpus_capped_by_free() -> None:
+    """空闲核不足时被空闲数封顶。"""
+    nodes = NODES.replace(
+        "NodeName=gc1 CPUAlloc=0 CPUTot=64", "NodeName=gc1 CPUAlloc=60 CPUTot=64"
+    )
+
+    async def run(command: str, *, timeout: float | None = None) -> ExecResult:
+        if command.startswith("scontrol"):
+            return ExecResult(command, 0, nodes, "", 1)
+        return ExecResult(command, 0, "Granted job allocation 1\n", "", 1)
+
+    info = await alloc.allocate(run, "gzu", purpose="tc", wait=1)  # type: ignore[arg-type]
+    assert info["cpus"] == 4  # min(64//4=16, 空闲 4) = 4

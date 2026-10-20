@@ -87,10 +87,39 @@ def _rank_partitions(
     return [p for _, p in ranked[:3]]
 
 
+def _default_cpus_formula(n: dict[str, object]) -> int:
+    """GPU 节点默认核数（用户规定）：min(节点总核//节点总卡数, 节点空闲核)。"""
+    cpu = cast(dict[str, int], n.get("cpu") or {})
+    gpus_by_type = cast(dict[str, dict[str, int]], n.get("gpus") or {})
+    total_gpus = sum(v["total"] for v in gpus_by_type.values())
+    per_gpu = (int(cpu.get("total") or 0) // total_gpus) if total_gpus else 0
+    return max(1, min(per_gpu, int(cpu.get("free") or 0)))
+
+
+async def _formula_cpus_for_partition(runner: Runner, partition: str) -> int:
+    """显式分区时按公式取该分区最优节点的默认核数。"""
+    data = await slurm.resources(runner, gpu_only=True, flt="cpu_gpu_free", partition=partition)
+    nodes = cast(list[dict[str, object]], data.get("nodes") or [])
+    want = partition.rstrip("*")
+    best, best_free = 0, 0
+    for n in nodes:
+        part_list = [p.rstrip("*") for p in cast(list[str], n.get("partitions") or [])]
+        if want not in part_list:
+            continue
+        gpus_by_type = cast(dict[str, dict[str, int]], n.get("gpus") or {})
+        free = sum(v["free"] for v in gpus_by_type.values())
+        if free > best_free:
+            best_free, best = free, _default_cpus_formula(n)
+    return best
+
+
 async def _rank_gpu_partitions(
     runner: Runner, gpus: int, cpus: int | None = None
-) -> tuple[list[str], str]:
-    """CPU 与 GPU 同时空闲、单节点 GPU 数与 CPU 核数都可满足的分区排名。"""
+) -> tuple[list[str], str, int]:
+    """CPU 与 GPU 同时空闲、单节点 GPU 数与 CPU 核数都可满足的分区排名。
+
+    返回 (候选分区, 余量摘要, 最优节点的默认核数建议)。
+    """
     data = await slurm.resources(runner, gpu_only=True, flt="cpu_gpu_free")
     nodes = cast(list[dict[str, object]], data.get("nodes") or [])
     want_cpus = max(1, cpus or 1)
@@ -104,7 +133,16 @@ async def _rank_gpu_partitions(
         return sum(v["free"] for v in gpus_by_type.values())
 
     filtered = [n for n in nodes if eligible(n)]
-    return _rank_partitions(filtered, score, max(1, gpus)), _availability_note(data)
+    ranked = _rank_partitions(filtered, score, max(1, gpus))
+    hint = 0
+    if ranked:
+        best_name = ranked[0]
+        for n in filtered:
+            part_list = cast(list[str], n.get("partitions") or [])
+            if part_list and part_list[0].rstrip("*") == best_name and score(n) > 0:
+                hint = _default_cpus_formula(n)
+                break
+    return ranked, _availability_note(data), hint
 
 
 async def _rank_cpu_partitions(runner: Runner, cpus: int) -> tuple[list[str], str]:
@@ -203,9 +241,8 @@ async def allocate(
         resource = "cpu" if (not gpus and cpus) else "gpu"
     # CPU 抢占不带 GPU 请求（CLI 默认 gpus=1 不得渗入）
     gpus = (gpus or 1) if resource == "gpu" else None
-    # GPU 抢占未显式给核数时用 profile 默认（集群 slurm 默认通常仅 1 核）
-    if resource == "gpu" and cpus is None and default_cpus:
-        cpus = int(default_cpus)
+    # GPU 抢占默认核数：显式 > profile 覆盖 > 节点公式 min(总核//总卡, 空闲核)
+    # （公式值在分区选定后回填，见下方 rank 结果）
     shown_resource = "auto(gpu优先)" if auto_mode and resource == "gpu" else resource
     request_desc = describe_request(shown_resource, gpus, cpus, partition)
     chosen_by = "explicit" if partition is not None else ""
@@ -216,7 +253,9 @@ async def allocate(
     if partition is not None:
         candidates = [partition]
     elif resource == "gpu":
-        candidates, note = await _rank_gpu_partitions(runner, int(gpus or 1), cpus)
+        candidates, note, formula_cpus = await _rank_gpu_partitions(runner, int(gpus or 1), cpus)
+        if cpus is None:
+            cpus = int(default_cpus) if default_cpus else (formula_cpus or None)
         chosen_by = "auto-gpu"
         if not candidates:
             if not auto_mode:
@@ -229,6 +268,8 @@ async def allocate(
                     "request": request_desc,
                 }
             resource = "cpu"  # 自动模式回退
+    if partition is not None and resource == "gpu" and cpus is None:
+        cpus = await _formula_cpus_for_partition(runner, partition) or None
     if partition is None and resource == "cpu":
         cpu_candidates, cpu_note = await _rank_cpu_partitions(runner, cpus or 4)
         candidates = candidates or cpu_candidates
@@ -244,6 +285,7 @@ async def allocate(
                 "request": request_desc,
             }
 
+    request_desc = describe_request(shown_resource, gpus, cpus, partition)
     name = tmux.session_name(label, purpose)
     await runner("mkdir -p $HOME/.clu/alloc/" + shlex.quote(label))
     # 瞬死故障转移：提交被弹回/秒级收回（实测贵大忙分区竞态）时
