@@ -134,32 +134,37 @@ async def ledger_query(
 async def slurm_alloc(
     connection: str,
     purpose: str = "alloc",
+    resource: str | None = None,
+    gpus: int = 1,
+    cpus: int | None = None,
     partition: str | None = None,
-    gpus: int | None = None,
-    preempt: bool = False,
     wait: float = 120.0,
 ) -> dict[str, Any]:
-    """申请交互式资源并直接执行（绝不只返回命令）：tmux 内 salloc，
-    分配后 sleep infinity 保活，断线不丢资源。
+    """抢占资源并直接执行（绝不只返回命令）：tmux 内 salloc + srun bash，
+    分配后 attach 即入计算节点 shell，断线不丢资源。
 
-    "抢占/抢卡"诉求请传 preempt=True（分区取 profile 配置）。返回 granted/pending/failed 与 job_id。
+    抢占选择自动完成（无需先查询）：resource 缺省 = GPU 优先、无空闲 GPU 回退 CPU；
+    resource=gpu / cpu 只抢该类（无则失败并附当前余量摘要）；
+    partition 显式指定则直接使用。返回 granted/pending/failed 与 job_id/node。
 
     Args:
         connection: cluster 连接 label
-        purpose: 会话用途名（如 train-a100），用于 tmux 会话命名与检索
-        partition: 分区（preempt 时可省，走 profile 配置）
-        gpus: 申请 GPU 数
-        preempt: 抢占模式
-        wait: 等待授予的秒数（超时会话保留，稍后 session_info 查看）
+        purpose: 会话用途名（如 train-a100），用于 tmux 命名与检索
+        resource: gpu | cpu；缺省为自动（GPU 优先回退 CPU）
+        gpus: GPU 卡数（默认 1；resource 含 gpu 时生效）
+        cpus: CPU 核数（cpu 资源必给则默认 4；也可与 GPU 同时指定）
+        partition: 显式分区（跳过自动选择）
+        wait: 等待授予秒数（超时会话保留，session_info 随时查）
     """
     return await _call(
         "slurm.alloc",
         {
             "label": connection,
             "purpose": purpose,
-            "partition": partition,
+            "resource": resource,
             "gpus": gpus,
-            "preempt": preempt,
+            "cpus": cpus,
+            "partition": partition,
             "wait": wait,
         },
     )

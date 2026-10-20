@@ -133,7 +133,7 @@ preempt_partition = "..." # 抢占模式使用的分区
 | `log` | connection, job_id, tail? | 日志文本 | M2 |
 | `cancel` | connection, job_id | 结果 | M2 |
 | `ledger_query` | 时间范围/连接/关键词/job_id 过滤 | 留痕记录列表（结构化过滤，不暴露裸 SQL） | M2 |
-| `alloc` | connection, partition, gpu?, preempt? | 分配与 tmux 会话信息 | M3 |
+| `alloc` | connection, purpose?, resource?, gpus=1, cpus?, partition?, wait? | 抢占接口（自动选择，无需先查询）：resource 缺省 GPU 优先、无则回退 CPU；gpu/cpu 只抢该类；partition 显式则直用。分区按单节点可满足度排名、瞬死自动轮换候选（忙分区竞态）。分配后 srun bash 落计算节点 | v1 |
 | `session_list` / `session_info` | connection? | tmux 托管会话列表/详情 | M3 |
 | `upload` / `download` | connection, local_path, remote_path | 传输结果 | M4 |
 | `connection_list` | — | 连接与池状态（含 health） | M2 |
@@ -241,4 +241,5 @@ Code 侧配置免确认白名单。
 | 2026-10-19 | 单级跳板进 v1，多级链路线图 | asyncssh 原生支持成本低；导入即全可用 |
 | 2026-10-19 | macOS + Linux 优先 | HPC 用户工作机以 Mac/Linux 为主 |
 | 2026-10-19 | 集成测试用容器，不用进程内假服务器/物理机 | 环境更真实；贡献者无真集群也能跑 |
+| 2026-10-20 | alloc 升级为专门抢占接口：默认 GPU 优先回退 CPU、resource/gpus/cpus/partition 可指定；用户侧命令形式保持 --gpus 简洁语法，集群方言由 clu 内部转换 | 用户裁决；贵大真机实测（--gres 插件强制、忙分区竞态需故障转移） |
 | 2026-10-19 | 包名 clu-ssh（clu 被占用） | PyPI 已核查 |

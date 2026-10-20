@@ -405,6 +405,53 @@ def resources_cmd(
     console.print(f"[dim]{result.get('note')}[/dim]")
 
 
+@app.command("alloc")
+def alloc_cmd(
+    label: str,
+    purpose: str = typer.Option("alloc", "--purpose", help="会话用途名。"),
+    gpu: bool = typer.Option(False, "--gpu", help="只抢 GPU。"),
+    cpu: bool = typer.Option(False, "--cpu", help="只抢 CPU。"),
+    gpus: int = typer.Option(1, "--gpus", help="GPU 卡数。"),
+    cpus: int = typer.Option(None, "--cpus", help="CPU 核数（cpu 资源默认 4）。"),
+    partition: str = typer.Option(None, "--partition", "-p", help="显式分区（跳过自动选择）。"),
+    wait: float = typer.Option(120.0, "--wait", help="等待授予秒数。"),
+) -> None:
+    """抢占资源（默认 GPU 优先无则 CPU），granted 后 clu attach 接入计算节点。"""
+    if gpu and cpu:
+        _fail("--gpu 与 --cpu 只能选一个")
+        return
+    resource = "gpu" if gpu else "cpu" if cpu else None
+    try:
+        ensure_daemon()
+        result = _do_request(
+            "slurm.alloc",
+            {
+                "label": label,
+                "purpose": purpose,
+                "resource": resource,
+                "gpus": gpus,
+                "cpus": cpus,
+                "partition": partition,
+                "wait": wait,
+            },
+        )
+    except CluError as exc:
+        _fail(f"抢占失败：{exc.message}")
+        return
+    state = str(result.get("state"))
+    style = "green" if state == "granted" else "yellow" if state == "pending" else "red"
+    console.print(
+        f"[{style}]{state}[/{style}]  job={result.get('job_id')}  node={result.get('node')}"
+        f"  partition={result.get('partition')}（{result.get('chosen_by')}）"
+    )
+    if state == "granted":
+        console.print(f"接入：[bold]clu attach {label} {purpose}[/bold]（exit 即释放）")
+    if result.get("availability"):
+        console.print(f"[dim]余量：{result.get('availability')}[/dim]")
+    if result.get("error"):
+        console.print(f"[red]{result.get('error')}[/red]")
+
+
 @app.command("attach")
 def attach(label: str, purpose: str) -> None:
     """接入托管会话的 tmux（交互式，经系统 ssh -t）。"""

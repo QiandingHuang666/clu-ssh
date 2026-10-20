@@ -298,27 +298,27 @@ async def _ledger_query(ctx: DaemonContext, params: dict[str, Any]) -> dict[str,
 
 @dispatcher.method("slurm.alloc")
 async def _slurm_alloc(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
-    """申请交互式资源：tmux 内直接执行 salloc 并轮询到授予（DESIGN §6 语义）。"""
+    """抢占接口：默认 GPU 优先、无则 CPU；resource=gpu/cpu 指定类型；
+    partition/gpus/cpus 可显式指定。直接执行（DESIGN §6 语义）。"""
     label = str(params["label"])
-    _cfg, profile = _require_cluster(ctx, label)
+    _require_cluster(ctx, label)
     purpose = str(params.get("purpose") or "alloc")
     info = await allocops.allocate(
         _runner(ctx, label),
         label,
         purpose=purpose,
-        partition=params.get("partition"),
+        resource=params.get("resource"),
         gpus=params.get("gpus"),
-        preempt=bool(params.get("preempt")),
-        profile=profile,
+        cpus=params.get("cpus"),
+        partition=params.get("partition"),
         wait=float(params.get("wait") or 120.0),
     )
     await ctx.ledger.record(
         kind="alloc",
         connection=label,
-        command=f"salloc purpose={purpose} partition={params.get('partition') or '-'}"
-        f" gpus={params.get('gpus') or '-'} preempt={params.get('preempt') or False}",
+        command=str(info.get("request") or "alloc"),
         job_id=str(info.get("job_id") or "") or None,
-        summary=f"alloc {purpose}: {info.get('state')}",
+        summary=f"alloc {purpose}: {info.get('state')} partition={info.get('partition')}",
     )
     return info
 
