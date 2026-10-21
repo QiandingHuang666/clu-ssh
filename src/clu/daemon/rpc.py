@@ -326,15 +326,28 @@ async def _slurm_alloc(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, 
 
 @dispatcher.method("session.list")
 async def _session_list(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    """托管会话列表。多连接时并行探测、单连接尽力而为——
+    不可达的连接降级为 unreachable 标注（一台关机的机器不该拖死全局）。"""
     label = params.get("label")
     data = ctx.store.load()
-    labels = [str(label)] if label else list(data.connections)
-    sessions: list[dict[str, object]] = []
-    for one in labels:
-        if one not in data.connections:
-            raise RpcFailure(ERR_NOT_FOUND, f"未知连接：{one}")
-        sessions.extend(await tmux.list_sessions(_runner(ctx, one), one))
-    return {"sessions": sessions}
+    if label is not None:
+        if str(label) not in data.connections:
+            raise RpcFailure(ERR_NOT_FOUND, f"未知连接：{label}")
+        labels = [str(label)]
+    else:
+        labels = list(data.connections)
+
+    async def probe(one: str) -> tuple[list[dict[str, object]], dict[str, object] | None]:
+        try:
+            rows = await asyncio.wait_for(tmux.list_sessions(_runner(ctx, one), one), timeout=6.0)
+            return rows, None
+        except Exception as exc:
+            return [], {"connection": one, "error": f"{type(exc).__name__}: {exc}"[:160]}
+
+    pairs = await asyncio.gather(*(probe(one) for one in labels))
+    sessions = [row for rows, _ in pairs for row in rows]
+    unreachable = [err for _, err in pairs if err is not None]
+    return {"sessions": sessions, "unreachable": unreachable}
 
 
 @dispatcher.method("session.info")

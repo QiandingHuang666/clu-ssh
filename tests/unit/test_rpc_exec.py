@@ -77,3 +77,32 @@ async def test_unknown_method(tmp_path: Path) -> None:
     ctx = await make_ctx(tmp_path)
     with pytest.raises(RpcFailure, match="未知方法"):
         await dispatcher.dispatch(ctx, "nope", {})
+
+
+async def test_session_list_best_effort(tmp_path: Path) -> None:
+    """一台连接不可达只降级标注，不炸全局；好连接的会话照常返回。"""
+    from clu.daemon.rpc import dispatcher
+
+    class SelectivePool(FakePool):
+        async def run(
+            self, label: str, command: str, *, timeout: float | None = None
+        ) -> ExecResult:
+            if label == "dead":
+                from clu.ssh.connection import CluConnectionError
+
+                raise CluConnectionError("Host is unreachable")
+            if command.startswith("tmux list-sessions"):
+                return ExecResult(command, 0, "clu/good/train|1700000000|0\n", "", 1)
+            return ExecResult(command, 0, "", "", 1)
+
+    store = ConfigStore(tmp_path / "connections.toml")
+    store.add_connection(ConnectionConfig(label="good", kind="cluster", host="h", user="u"))
+    store.add_connection(ConnectionConfig(label="dead", kind="local", host="h", user="u"))
+    ledger = Ledger(tmp_path / "l.sqlite3")
+    await ledger.open()
+    ctx = DaemonContext(
+        store=store, pool=SelectivePool(), ledger=ledger, socket_path=tmp_path / "s.sock"
+    )
+    result = await dispatcher.dispatch(ctx, "session.list", {})
+    assert [s["purpose"] for s in result["sessions"]] == ["train"]
+    assert [u["connection"] for u in result["unreachable"]] == ["dead"]

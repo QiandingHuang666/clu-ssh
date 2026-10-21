@@ -303,20 +303,28 @@ def session_list(label: str = typer.Argument(None, help="连接 label；缺省�
         if isinstance(raw_sessions, list)
         else []
     )
-    if not sessions:
-        console.print("暂无托管会话")
-        return
-    table = Table(title="托管会话")
-    for col in ("connection", "purpose", "state", "attached"):
-        table.add_column(col)
-    for row in sessions:
-        table.add_row(
-            str(row.get("connection")),
-            str(row.get("purpose")),
-            "在线",
-            str(row.get("attached")),
-        )
-    console.print(table)
+    raw_unreachable = result.get("unreachable")
+    unreachable = (
+        [dict(r) for r in raw_unreachable if isinstance(r, dict)]
+        if isinstance(raw_unreachable, list)
+        else []
+    )
+    if sessions:
+        table = Table(title="托管会话")
+        for col in ("connection", "purpose", "state", "attached"):
+            table.add_column(col)
+        for row in sessions:
+            table.add_row(
+                str(row.get("connection")),
+                str(row.get("purpose")),
+                "在线",
+                str(row.get("attached")),
+            )
+        console.print(table)
+    else:
+        console.print("暂无托管会话" + ("（部分连接不可达，见下）" if unreachable else ""))
+    for row in unreachable:
+        console.print(f"[yellow]连接不可达[/yellow] {row.get('connection')}：{row.get('error')}")
 
 
 @app.command("resources")
