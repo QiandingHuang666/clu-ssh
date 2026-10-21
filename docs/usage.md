@@ -284,9 +284,9 @@ clu forward list && clu forward remove fwd-1
 | 现象 | 处理 |
 |---|---|
 | `daemon 未运行` | `clu server ensure`；看 `daemon.log` |
-| 连接处于退避期（`retry_after`） | 刚失败过，等提示秒数或 `clu server restart`（stop+ensure） |
+| 连接处于退避期（`retry_after`） | 刚失败过，等提示秒数；或 `clu server stop && clu server ensure` 重置连接池 |
 | `Host key ... changed` | 主机密钥变了。确认是重装系统等正当原因后，删掉 `~/.config/clu/known_hosts` 对应行 |
-| salloc 后 session 一直 pending | 正常排队；`clu session info` 随时看，超时会话保留 |
+| salloc 后 session 一直 pending | 正常排队；`clu session list` 看会话，或让 Claude Code 调 `session_info` 查详情；超时会话保留 |
 | salloc 报 "--gres=gpu:N must be input" | 集群提交插件强制经典语法——clu 已内置 `--gres=gpu:N`（贵大实测） |
 | attach 后 hostname 是登录节点 | 已修复：clu 用 `srun bash` 落计算节点（无 SallocDefaultCommand 的集群 salloc 默认本地执行） |
 | attach 后无提示符/配置未生效 | 已修复：`srun --pty bash -l` 持真终端并走登录 shell；日志改用 tmux pipe-pane（tee 管道会让 srun 拒绝 --pty） |
