@@ -23,6 +23,27 @@ CREATE TABLE IF NOT EXISTS exec_records (
 );
 CREATE INDEX IF NOT EXISTS idx_exec_ts ON exec_records(ts);
 CREATE INDEX IF NOT EXISTS idx_exec_conn ON exec_records(connection);
+CREATE TABLE IF NOT EXISTS jobs (
+    connection   TEXT NOT NULL,
+    job_id       TEXT NOT NULL,
+    name         TEXT,
+    script_path  TEXT,
+    script       TEXT,
+    partition    TEXT,
+    requested_nodes TEXT,
+    cpus         INTEGER,
+    gpus         INTEGER,
+    node_list    TEXT,
+    stdout_path  TEXT,
+    stderr_path  TEXT,
+    state        TEXT NOT NULL,
+    exit_code    TEXT,
+    submitted_ts TEXT NOT NULL,
+    updated_ts   TEXT NOT NULL,
+    PRIMARY KEY (connection, job_id)
+);
+CREATE INDEX IF NOT EXISTS idx_jobs_state ON jobs(state);
+CREATE INDEX IF NOT EXISTS idx_jobs_ts ON jobs(submitted_ts);
 CREATE TABLE IF NOT EXISTS sessions (
     label       TEXT NOT NULL,
     purpose     TEXT NOT NULL,
@@ -70,6 +91,118 @@ class Ledger:
         if self._db is None:
             return []
         return await query_ledger(self._db, f)
+
+    # ---- 作业台账 ----
+
+    _JOB_FIELDS = (
+        "name",
+        "script_path",
+        "script",
+        "partition",
+        "requested_nodes",
+        "cpus",
+        "gpus",
+        "node_list",
+        "stdout_path",
+        "stderr_path",
+        "state",
+        "exit_code",
+    )
+
+    async def upsert_job(
+        self, *, connection: str, job_id: str, state: str, **fields: object
+    ) -> None:
+        """提交入库（新作业）；同名同连接则更新。"""
+        if self._db is None:
+            return
+        from datetime import UTC, datetime
+
+        now = datetime.now(UTC).isoformat(timespec="seconds")
+        values = {f: fields.get(f) for f in self._JOB_FIELDS}
+        values["state"] = state
+        cols = ["connection", "job_id", *self._JOB_FIELDS, "submitted_ts", "updated_ts"]
+        row = [connection, job_id, *[values[f] for f in self._JOB_FIELDS], now, now]
+        updates = ", ".join(f"{c} = excluded.{c}" for c in [*self._JOB_FIELDS, "updated_ts"])
+        await self._db.execute(
+            f"INSERT INTO jobs ({', '.join(cols)}) VALUES ({', '.join('?' for _ in cols)})"
+            f" ON CONFLICT(connection, job_id) DO UPDATE SET {updates}",
+            row,
+        )
+        await self._db.commit()
+
+    async def update_job(self, connection: str, job_id: str, **fields: object) -> None:
+        """按字段更新作业（状态核对用）。"""
+        if self._db is None:
+            return
+        from datetime import UTC, datetime
+
+        updates = {k: v for k, v in fields.items() if k in self._JOB_FIELDS}
+        updates["updated_ts"] = datetime.now(UTC).isoformat(timespec="seconds")
+        assignments = ", ".join(f"{k} = ?" for k in updates)
+        await self._db.execute(
+            f"UPDATE jobs SET {assignments} WHERE connection = ? AND job_id = ?",
+            [*updates.values(), connection, job_id],
+        )
+        await self._db.commit()
+
+    async def list_jobs(
+        self, connection: str | None = None, *, active_only: bool = False
+    ) -> list[dict[str, object]]:
+        if self._db is None:
+            return []
+        terminal = (
+            "COMPLETED",
+            "FAILED",
+            "CANCELLED",
+            "TIMEOUT",
+            "OUT_OF_MEMORY",
+            "NODE_FAIL",
+            "PREEMPTED",
+            "BOOT_FAIL",
+            "DEADLINE",
+        )
+        clauses: list[str] = []
+        params: list[object] = []
+        if connection:
+            clauses.append("connection = ?")
+            params.append(connection)
+        if active_only:
+            placeholders = ", ".join("?" for _ in terminal)
+            clauses.append(f"state NOT IN ({placeholders})")
+            params.extend(terminal)
+        where = f" WHERE {' AND '.join(clauses)}" if clauses else ""
+        cursor = await self._db.execute(
+            "SELECT connection, job_id, name, script_path, script, partition, requested_nodes,"
+            " cpus, gpus, node_list, stdout_path, stderr_path, state, exit_code,"
+            f" submitted_ts, updated_ts FROM jobs{where} ORDER BY submitted_ts DESC",
+            params,
+        )
+        rows = await cursor.fetchall()
+        keys = [
+            "connection",
+            "job_id",
+            "name",
+            "script_path",
+            "script",
+            "partition",
+            "requested_nodes",
+            "cpus",
+            "gpus",
+            "node_list",
+            "stdout_path",
+            "stderr_path",
+            "state",
+            "exit_code",
+            "submitted_ts",
+            "updated_ts",
+        ]
+        return [dict(zip(keys, r, strict=True)) for r in rows]
+
+    async def get_job(self, connection: str, job_id: str) -> dict[str, object] | None:
+        for row in await self.list_jobs(connection):
+            if str(row["job_id"]) == job_id:
+                return row
+        return None
 
     async def upsert_session(self, **fields: object) -> None:
         """会话登记（alloc 落库 / 状态刷新）；label 与 purpose 必填。"""

@@ -452,6 +452,9 @@ def alloc_cmd(
         _fail(f"抢占失败：{exc.message}")
         return
     state = str(result.get("state"))
+    if state == "exists":
+        _fail(f"已在运行：{result.get('error')}")
+        return
     style = "green" if state == "granted" else "yellow" if state == "pending" else "red"
     console.print(
         f"[{style}]{state}[/{style}]  job={result.get('job_id')}  node={result.get('node')}"
@@ -506,6 +509,140 @@ def session_release(
         console.print(f"[green]已释放[/green] {label}/{purpose}（资源已归还）")
     else:
         _fail(f"不存在：{label}/{purpose}")
+
+
+@app.command("submit")
+def submit_cmd(
+    label: str,
+    script_file: Path = typer.Option(None, "--script-file", "-f", help="sbatch 脚本文件。"),
+    script: str = typer.Option(None, "--script", help="脚本内容（与 -f 二选一；缺省读 stdin）。"),
+    name: str = typer.Option(None, "--name", "-J", help="作业名。"),
+    partition: str = typer.Option(None, "--partition", "-p", help="分区。"),
+    nodes: int = typer.Option(None, "--nodes", "-N", help="节点数。"),
+    cpus: int = typer.Option(None, "--cpus", "-c", help="每任务 CPU 核数。"),
+    gpus: int = typer.Option(None, "--gpus", help="GPU 卡数。"),
+    time_limit: str = typer.Option(None, "--time", "-t", help="时限，如 4:00:00。"),
+) -> None:
+    """提交批处理作业：脚本与日志落到远端 ~/.clu/jobs/<连接>/，并记入本地台账。"""
+    import sys
+
+    if script_file is not None and script is not None:
+        _fail("--script-file 与 --script 二选一")
+        return
+    if script_file is not None:
+        try:
+            content = script_file.read_text(encoding="utf-8")
+        except OSError as exc:
+            _fail(f"读取脚本失败：{exc}")
+            return
+    elif script is not None:
+        content = script
+    else:
+        if sys.stdin.isatty():
+            _fail("给出 --script-file / --script，或通过管道传入脚本")
+            return
+        content = sys.stdin.read()
+    try:
+        ensure_daemon()
+        result = _do_request(
+            "slurm.submit",
+            {
+                "label": label,
+                "script": content,
+                "name": name,
+                "partition": partition,
+                "nodes": nodes,
+                "cpus": cpus,
+                "gpus": gpus,
+                "time_limit": time_limit,
+            },
+        )
+    except CluError as exc:
+        _fail(f"提交失败：{exc.message}")
+        return
+    console.print(f"[green]已提交[/green] job={result.get('job_id')}  name={result.get('name')}")
+    console.print(f"脚本：{result.get('script_path')}")
+    if result.get("stdout_path"):
+        console.print(f"stdout：{result.get('stdout_path')}")
+    if result.get("stderr_path"):
+        console.print(f"stderr：{result.get('stderr_path')}")
+
+
+job_app = typer.Typer(help="作业台账。", no_args_is_help=True)
+app.add_typer(job_app, name="job")
+
+
+@job_app.command("log")
+def job_log_cmd(
+    label: str,
+    job_id: str,
+    tail: int = typer.Option(100, "--tail", help="行数。"),
+) -> None:
+    """读取台账作业的 stdout/stderr（路径提交时已落库）。"""
+    try:
+        ensure_daemon()
+        result = _do_request("job.log", {"label": label, "job_id": job_id, "tail": tail})
+    except CluError as exc:
+        _fail(f"读取失败：{exc.message}")
+        return
+    console.print(f"[dim]state={result.get('state')}  stdout={result.get('stdout_path')}[/dim]")
+    if result.get("stdout"):
+        console.print(str(result["stdout"]).rstrip())
+    if result.get("stderr"):
+        console.print("[red]--- stderr ---[/red]")
+        console.print(str(result["stderr"]).rstrip())
+
+
+@job_app.command("list")
+def job_list_cmd(
+    label: str = typer.Argument(None, help="连接 label；缺省全部。"),
+    active_only: bool = typer.Option(False, "--active", help="只看非终态作业。"),
+) -> None:
+    """列出本地台账中的作业（daemon 定期核对其状态）。"""
+    try:
+        ensure_daemon()
+        result = _do_request("job.list", {"label": label, "active_only": active_only})
+    except CluError as exc:
+        _fail(f"查询失败：{exc.message}")
+        return
+    raw = result.get("jobs")
+    rows = [dict(r) for r in raw if isinstance(r, dict)] if isinstance(raw, list) else []
+    if not rows:
+        console.print("台账中暂无作业")
+        return
+    table = Table(title="作业台账")
+    for col in ("连接", "job_id", "名称", "状态", "节点", "分区", "提交时间"):
+        table.add_column(col)
+    for r in rows:
+        state = str(r.get("state") or "")
+        style = (
+            "green"
+            if state in ("COMPLETED",)
+            else (
+                "red"
+                if state
+                in (
+                    "FAILED",
+                    "CANCELLED",
+                    "TIMEOUT",
+                    "OUT_OF_MEMORY",
+                    "NODE_FAIL",
+                    "PREEMPTED",
+                    "REVOKED",
+                )
+                else "yellow"
+            )
+        )
+        table.add_row(
+            str(r.get("connection")),
+            str(r.get("job_id")),
+            str(r.get("name") or "-"),
+            f"[{style}]{state}[/{style}]",
+            str(r.get("node_list") or "-"),
+            str(r.get("partition") or "-"),
+            str(r.get("submitted_ts") or "-"),
+        )
+    console.print(table)
 
 
 @app.command("attach")

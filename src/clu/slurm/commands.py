@@ -7,6 +7,7 @@
 import base64
 import re
 import shlex
+import time
 import uuid
 from collections import Counter
 from collections.abc import Awaitable, Callable
@@ -41,6 +42,27 @@ _STATUS_CMD = f"sinfo -h -o '{_PARTITION_FORMAT}'; echo {_SEPARATOR}; squeue -h 
 _RESOURCES_CMD = "scontrol show nodes -o"
 
 _SBATCH_JOB_ID = re.compile(r"Submitted batch job (\d+)")
+_SBATCH_LINE = re.compile(r"^\s*#SBATCH\s+", re.IGNORECASE)
+
+TERMINAL_STATES = frozenset(
+    {
+        "COMPLETED",
+        "FAILED",
+        "CANCELLED",
+        "TIMEOUT",
+        "OUT_OF_MEMORY",
+        "NODE_FAIL",
+        "PREEMPTED",
+        "BOOT_FAIL",
+        "DEADLINE",
+        "REVOKED",
+    }
+)
+
+
+def normalize_state(raw: str) -> str:
+    """squeue/sacct 状态归一：去 '+' 后缀、截断描述。"""
+    return raw.strip().split("+", 1)[0].split(" ", 1)[0].upper() or "UNKNOWN"
 
 
 async def _run(runner: Runner, command: str, *, timeout: float = 30.0) -> ExecResult:
@@ -428,14 +450,105 @@ async def job_log(runner: Runner, job_id: str, *, tail: int = 100) -> dict[str, 
     return result
 
 
-async def submit(runner: Runner, script: str) -> dict[str, object]:
-    """上传脚本（base64 防注入）并 sbatch，返回 job_id。"""
-    encoded = base64.b64encode(script.encode("utf-8")).decode("ascii")
-    marker = uuid.uuid4().hex[:12]
-    remote_dir = "$HOME/.clu/jobs"
+def _safe_name(name: str) -> str:
+    return re.sub(r"[^A-Za-z0-9_.-]+", "-", name).strip("-") or "job"
+
+
+def _script_has(script: str, *flags: str) -> bool:
+    """用户脚本是否已含指定类别的 #SBATCH 指令。"""
+    for line in script.splitlines():
+        if not _SBATCH_LINE.match(line):
+            continue
+        body = line.strip().split(None, 1)[1] if len(line.strip().split(None, 1)) > 1 else ""
+        for flag in flags:
+            if body.split()[0].split("=")[0] == flag:
+                return True
+    return False
+
+
+def build_sbatch_script(
+    script: str,
+    *,
+    name: str,
+    partition: str | None,
+    nodes: int | None,
+    cpus: int | None,
+    gpus: int | None,
+    time_limit: str | None,
+    stdout_path: str,
+    stderr_path: str,
+) -> tuple[str, bool, bool]:
+    """注入 #SBATCH 指令；用户脚本已声明同类指令则尊重之。
+
+    返回 (最终脚本, stdout 由 clu 接管, stderr 由 clu 接管)。
+    """
+    inject: list[str] = []
+    if name and not _script_has(script, "-J", "--job-name"):
+        inject.append(f"#SBATCH -J {shlex.quote(name)}")
+    if partition and not _script_has(script, "-p", "--partition"):
+        inject.append(f"#SBATCH -p {shlex.quote(partition)}")
+    if nodes and not _script_has(script, "-N", "--nodes"):
+        inject.append(f"#SBATCH -N {int(nodes)}")
+    if cpus and not _script_has(script, "-c", "--cpus-per-task"):
+        inject.append(f"#SBATCH -c {int(cpus)}")
+    if gpus and not _script_has(script, "--gres", "--gpus"):
+        inject.append(f"#SBATCH --gres=gpu:{int(gpus)}")
+    if time_limit and not _script_has(script, "-t", "--time"):
+        inject.append(f"#SBATCH -t {shlex.quote(time_limit)}")
+    own_out = _script_has(script, "-o", "--output")
+    own_err = _script_has(script, "-e", "--error")
+    if not own_out:
+        inject.append(f"#SBATCH -o {stdout_path}")
+    if not own_err:
+        inject.append(f"#SBATCH -e {stderr_path}")
+    lines = script.splitlines()
+    insert_at = 1 if lines and lines[0].startswith("#!") else 0
+    head, tail = lines[:insert_at], lines[insert_at:]
+    final = "\n".join([*head, *inject, *tail])
+    if not final.endswith("\n"):
+        final += "\n"
+    return final, not own_out, not own_err
+
+
+async def submit(
+    runner: Runner,
+    script: str,
+    *,
+    label: str,
+    name: str | None = None,
+    partition: str | None = None,
+    nodes: int | None = None,
+    cpus: int | None = None,
+    gpus: int | None = None,
+    time_limit: str | None = None,
+) -> dict[str, object]:
+    """写脚本（base64 防注入）到 ~/.clu/jobs/<label>/ 后 sbatch。"""
+    safe = _safe_name(name or "job")
+    stamp = time.strftime("%Y%m%d-%H%M%S", time.gmtime()) + "-" + uuid.uuid4().hex[:6]
+    # sbatch 指令不展开 $HOME（实测贵大：StdOut=/home/u/$HOME/...）——必须用绝对路径
+    home = (await _run(runner, 'printf "%s" "$HOME"')).stdout.strip()
+    if not home.startswith("/"):
+        home = "$HOME"  # 兜底（正常集群不会走到）
+    base = f"{home}/.clu/jobs/{label}/{safe}-{stamp}"
+    script_path = f"{base}.sh"
+    stdout_path = f"{base}-%j.out"
+    stderr_path = f"{base}-%j.err"
+    final, clu_out, clu_err = build_sbatch_script(
+        script,
+        name=name or safe,
+        partition=partition,
+        nodes=nodes,
+        cpus=cpus,
+        gpus=gpus,
+        time_limit=time_limit,
+        stdout_path=stdout_path,
+        stderr_path=stderr_path,
+    )
+    encoded = base64.b64encode(final.encode("utf-8")).decode("ascii")
     command = (
-        f"mkdir -p {remote_dir} && echo {encoded} | base64 -d > {remote_dir}/job-{marker}.sh"
-        f" && sbatch {remote_dir}/job-{marker}.sh"
+        f"mkdir -p {shlex.quote(home)}/.clu/jobs/{shlex.quote(label)}"
+        f" && echo {encoded} | base64 -d > {script_path}"
+        f" && sbatch {script_path}"
     )
     result = await _run(runner, command)
     matched = _SBATCH_JOB_ID.search(result.stdout)
@@ -443,7 +556,59 @@ async def submit(runner: Runner, script: str) -> dict[str, object]:
         raise CluConnectionError(
             f"sbatch 失败（exit={result.exit_code}）：{result.stderr.strip()[:500]}"
         )
-    return {"job_id": matched.group(1), "script_path": f"{remote_dir}/job-{marker}.sh"}
+    job_id = matched.group(1)
+    # %j 由 slurm 在作业启动时展开；解析出实际文件路径供直接读取
+    return {
+        "job_id": job_id,
+        "script_path": script_path,
+        "script": final,
+        "stdout_path": stdout_path.replace("%j", job_id) if clu_out else None,
+        "stderr_path": stderr_path.replace("%j", job_id) if clu_err else None,
+        "name": name or safe,
+        "partition": partition,
+        "nodes": nodes,
+        "cpus": cpus,
+        "gpus": gpus,
+    }
+
+
+async def check_jobs(runner: Runner, job_ids: list[str]) -> dict[str, dict[str, object]]:
+    """批量核对作业状态：squeue 取实时，已消失的用 sacct 补终态。"""
+    if not job_ids:
+        return {}
+    ids = ",".join(shlex.quote(j) for j in job_ids)
+    found: dict[str, dict[str, object]] = {}
+    live = await _run(runner, f"squeue -h -j {ids} -o '%i|%T|%N|%r'")
+    for line in live.stdout.splitlines():
+        parts = line.strip().split("|")
+        if len(parts) != 4:
+            continue
+        found[parts[0]] = {
+            "state": normalize_state(parts[1]),
+            "node_list": parts[2] or None,
+            "reason": parts[3] or None,
+            "exit_code": None,
+        }
+    missing = [j for j in job_ids if j not in found]
+    if missing:
+        ids2 = ",".join(shlex.quote(j) for j in missing)
+        acct = await _run(
+            runner, f"sacct -n -P -j {ids2} -o JobID,State,ExitCode,NodeList 2>/dev/null || true"
+        )
+        for line in acct.stdout.splitlines():
+            parts = line.strip().split("|")
+            if len(parts) != 4:
+                continue
+            base_id = parts[0].split(".", 1)[0]
+            if base_id in found:
+                continue  # 同一作业的 .batch/.extern 行：取首个
+            found[base_id] = {
+                "state": normalize_state(parts[1]),
+                "node_list": parts[3] or None,
+                "reason": None,
+                "exit_code": parts[2] or None,
+            }
+    return found
 
 
 async def cancel(runner: Runner, job_id: str) -> dict[str, object]:

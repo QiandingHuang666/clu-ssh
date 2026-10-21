@@ -1,6 +1,10 @@
 #!/bin/sh
-# 假 squeue：按格式参数分派——%i| 完整表 / %N| 运行作业 nodelist / %T 状态列
+# 假 squeue：-j 单查 / %i| 作业表 / %N| 运行作业节点 / %T 状态列
 case "$*" in
+  *-j*)
+    [ -f "$HOME/.fake_job_done" ] && exit 0
+    echo "12345|RUNNING|gpu-a100-8card-1|None"
+    ;;
   *%i\|*)
     echo "12345|RUNNING|fake-train|gpu|01:23:00|1-00:00:00|1|8|64G|gpu:A100:2|None"
     echo "12346|PENDING|fake-eval|cpu|0:00|2:00:00|1|4|16G|(null)|Resources"

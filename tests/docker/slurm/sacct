@@ -1,0 +1,6 @@
+#!/bin/sh
+# 假 sacct：作业标记为完成后返回终态
+if [ -f "$HOME/.fake_job_done" ]; then
+  echo "12345|COMPLETED|0:0|gpu-a100-8card-1"
+  echo "12345.batch|COMPLETED|0:0|gpu-a100-8card-1"
+fi

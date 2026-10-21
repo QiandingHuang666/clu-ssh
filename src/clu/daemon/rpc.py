@@ -3,6 +3,7 @@
 import asyncio
 import logging
 import os
+import shlex
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
@@ -237,13 +238,38 @@ async def _slurm_resources(ctx: DaemonContext, params: dict[str, Any]) -> dict[s
 
 @dispatcher.method("slurm.submit")
 async def _slurm_submit(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    """sbatch 提交：脚本/日志统一落 ~/.clu/jobs/<label>/，作业入库 jobs 台账。"""
     label = str(params["label"])
     script = str(params["script"])
     _require_cluster(ctx, label)
     decision = check_submit_script(script)
     if not decision.allowed:
         raise RpcFailure("policy_denied", decision.message)
-    result = await slurm.submit(_runner(ctx, label), script)
+    result = await slurm.submit(
+        _runner(ctx, label),
+        script,
+        label=label,
+        name=params.get("name"),
+        partition=params.get("partition"),
+        nodes=int(params["nodes"]) if params.get("nodes") else None,
+        cpus=int(params["cpus"]) if params.get("cpus") else None,
+        gpus=int(params["gpus"]) if params.get("gpus") else None,
+        time_limit=params.get("time_limit"),
+    )
+    await ctx.ledger.upsert_job(
+        connection=label,
+        job_id=str(result["job_id"]),
+        state="PENDING",
+        name=result.get("name"),
+        script_path=result.get("script_path"),
+        script=str(result.get("script") or ""),
+        partition=result.get("partition"),
+        requested_nodes=str(result["nodes"]) if result.get("nodes") else None,
+        cpus=result.get("cpus"),
+        gpus=result.get("gpus"),
+        stdout_path=result.get("stdout_path"),
+        stderr_path=result.get("stderr_path"),
+    )
     await ctx.ledger.record(
         kind="submit",
         connection=label,
@@ -252,6 +278,82 @@ async def _slurm_submit(ctx: DaemonContext, params: dict[str, Any]) -> dict[str,
         summary=f"提交作业 {result['job_id']}",
     )
     return {"connection": label, **result}
+
+
+@dispatcher.method("job.log")
+async def _job_log(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    """读台账作业的 stdout/stderr（路径在提交时已落库，不依赖 scontrol）。"""
+    label = str(params["label"])
+    job_id = str(params["job_id"])
+    tail = int(params.get("tail") or 100)
+    row = await ctx.ledger.get_job(label, job_id)
+    if row is None:
+        raise RpcFailure(ERR_NOT_FOUND, f"台账中无作业 {label}/{job_id}")
+    out, err = row.get("stdout_path"), row.get("stderr_path")
+    result: dict[str, Any] = {
+        "job_id": job_id,
+        "state": row.get("state"),
+        "stdout_path": out,
+        "stderr_path": err,
+    }
+    if out:
+        got = await ctx.pool.run(
+            label, f"tail -n {tail} {shlex.quote(str(out))} 2>/dev/null || true"
+        )
+        result["stdout"] = got.stdout
+    else:
+        result["stdout"] = ""
+    if err:
+        got = await ctx.pool.run(
+            label, f"tail -n {tail} {shlex.quote(str(err))} 2>/dev/null || true"
+        )
+        result["stderr"] = got.stdout
+    else:
+        result["stderr"] = ""
+    return result
+
+
+@dispatcher.method("job.refresh")
+async def _job_refresh(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    """立即核对台账中非终态作业（daemon 平时每 JOB_CHECK_INTERVAL 自动核对）。"""
+    return await check_tracked_jobs(ctx)
+
+
+@dispatcher.method("job.list")
+async def _job_list(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    """作业台账：本地库记录的提交历史与最近一次核对的状态。"""
+    rows = await ctx.ledger.list_jobs(
+        params.get("label"), active_only=bool(params.get("active_only"))
+    )
+    return {"jobs": rows}
+
+
+async def check_tracked_jobs(ctx: "DaemonContext") -> dict[str, int]:
+    """巡检一轮台账内的非终态作业，刷新状态与节点。"""
+    active = await ctx.ledger.list_jobs(active_only=True)
+    by_conn: dict[str, list[dict[str, object]]] = {}
+    for row in active:
+        by_conn.setdefault(str(row["connection"]), []).append(row)
+    updated = 0
+    for label, rows in by_conn.items():
+        ids = [str(r["job_id"]) for r in rows]
+        try:
+            found = await asyncio.wait_for(slurm.check_jobs(_runner(ctx, label), ids), timeout=30.0)
+        except Exception:
+            continue
+        for row in rows:
+            info = found.get(str(row["job_id"]))
+            if info is None:
+                continue
+            await ctx.ledger.update_job(
+                label,
+                str(row["job_id"]),
+                state=info["state"],
+                node_list=info.get("node_list"),
+                exit_code=info.get("exit_code"),
+            )
+            updated += 1
+    return {"checked": len(active), "updated": updated}
 
 
 @dispatcher.method("slurm.log")

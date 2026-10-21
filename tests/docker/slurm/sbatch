@@ -1,9 +1,22 @@
 #!/bin/sh
-# 假 sbatch：写一行输出到默认路径，返回固定 job id 12345
-out="$HOME/slurm-12345.out"
+# 假 sbatch：解析脚本内 #SBATCH -o（%j -> 12345），写一行输出；返回固定 job id
+script=""
 for a in "$@"; do
-  case "$a" in --output=*) out="${a#--output=}" ;; esac
+  case "$a" in
+    -*) ;;
+    *) script="$a" ;;
+  esac
 done
-mkdir -p "$(dirname "$out")" 2>/dev/null
-echo "[fake-sbatch] job started at $(date)" > "$out"
+out=""
+if [ -n "$script" ] && [ -f "$script" ]; then
+  out=$(grep -m1 '^#SBATCH -o ' "$script" | sed 's/^#SBATCH -o //')
+fi
+out=$(echo "$out" | sed 's/%j/12345/g')
+if [ -n "$out" ]; then
+  eval "out_path=$out"   # 展开 $HOME
+  mkdir -p "$(dirname "$out_path")" 2>/dev/null
+  echo "[fake-sbatch] job started at $(date)" > "$out_path"
+fi
+# 兼容旧 scontrol 夹具：同时维护默认输出文件
+echo "[fake-sbatch] job started at $(date)" > "$HOME/slurm-12345.out"
 echo "Submitted batch job 12345"

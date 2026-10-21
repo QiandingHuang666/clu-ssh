@@ -136,7 +136,7 @@ preempt_partition = "..." # 抢占模式使用的分区
 | `jobs` | connection, state? | 结构化作业列表（squeue） | M2 |
 | `status` | connection | 分区/节点/GPU 概览（sinfo+squeue 合并单次往返） | M2 |
 | `resources` | connection, partition?, filter?, gpu_only?, include_nodes? | 节点级+分区级 CPU/GPU 余量，单次往返。已占取节点 AllocTRES（gres/gpu 总量为准，typed 归属型号；老集群退回 squeue %b 估算并注明）。filter=cpu_free / cpu_gpu_free / fully_idle，gpu_only 可叠加；默认紧凑视图，过滤或 include_nodes 才带节点明细（验收期新增，替代 agent 自拼 sinfo/scontrol） | v1 |
-| `submit` | connection, script（文本或远端路径） | job_id | M2 |
+| `submit` | connection, script（文本）, name?, partition?, nodes?, cpus?, gpus?, time_limit? | 写入 `~/.clu/jobs/<conn>/` 后 sbatch；stdout/stderr 默认落 `~/.clu/jobs/<conn>/<name>-<ts>-%j.{out,err}`（脚本自带 #SBATCH --output 则尊重）；脚本内容、路径、资源、状态入库 `jobs` 表 | v1 |
 | `log` | connection, job_id, tail? | 日志文本 | M2 |
 | `cancel` | connection, job_id | 结果 | M2 |
 | `ledger_query` | 时间范围/连接/关键词/job_id 过滤 | 留痕记录列表（结构化过滤，不暴露裸 SQL） | M2 |
@@ -174,6 +174,16 @@ CREATE INDEX idx_exec_conn ON exec_records(connection);
 ```
 
 不做事务/计划模型。检索 = `ledger_query` 结构化过滤。
+
+### 7.1 作业台账（v1 验收期新增）
+
+`jobs` 表记录每次 sbatch 提交：`(connection, job_id)` 主键、名称、脚本内容与远端路径、
+申请资源（分区/节点/CPU/GPU/时限）、实际节点、stdout/stderr 路径、状态与时间戳。
+
+- 提交即入库（状态 PENDING/RUNNING 由 sbatch 返回与后续核对更新）
+- daemon 每 `JOB_CHECK_INTERVAL`（默认 60s）核对非终态作业：squeue 取实时状态，
+  已消失的用 sacct 补终态（COMPLETED/FAILED/CANCELLED/TIMEOUT/...），更新入库
+- 终态作业保留（历史可查），不删除
 
 ## 8. 安全模型（双层）
 
@@ -250,4 +260,5 @@ Code 侧配置免确认白名单。
 | 2026-10-19 | 集成测试用容器，不用进程内假服务器/物理机 | 环境更真实；贡献者无真集群也能跑 |
 | 2026-10-20 | alloc 升级为专门抢占接口：默认 GPU 优先回退 CPU、resource/gpus/cpus/partition 可指定；用户侧命令形式保持 --gpus 简洁语法，集群方言由 clu 内部转换 | 用户裁决；贵大真机实测（--gres 插件强制、忙分区竞态需故障转移） |
 | 2026-10-21 | 会话管理引入 SQLite 登记表：远端 tmux 仍是存活真相，本地登记支撑 daemon 重启零探测恢复与不可达降级 | 用户裁决：需支持本地重启而远端资源仍持有的重建 |
+| 2026-10-21 | sbatch 作业引入 jobs 台账：脚本与 stdio 路径统一在 `~/.clu/jobs/<conn>/`，daemon 定期核对状态；submit 支持分区/节点/CPU/GPU/时限参数 | 用户裁决：作业提交需可追踪、可查询、日志集中 |
 | 2026-10-19 | 包名 clu-ssh（clu 被占用） | PyPI 已核查 |

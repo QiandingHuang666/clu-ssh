@@ -95,25 +95,45 @@ def _prepare_socket(path: Path) -> None:
 
 
 async def _session_watch(ctx: "DaemonContext") -> None:
-    """定期巡检登记会话：状态刷新与消亡销账（间隔见 constants.SESSION_CHECK_INTERVAL）。"""
-    from clu.daemon.rpc import check_registered_sessions
+    """定期巡检：会话登记（状态刷新/消亡销账）与作业台账（状态核对）。"""
+    from clu.daemon.rpc import check_registered_sessions, check_tracked_jobs
 
+    session_interval = C.SESSION_CHECK_INTERVAL
+    job_interval = C.JOB_CHECK_INTERVAL
+    next_session = next_job = 0.0
     while True:
-        await asyncio.sleep(C.SESSION_CHECK_INTERVAL)
-        try:
-            report = await check_registered_sessions(ctx)
-            if report["checked"]:
-                log.info(
-                    "会话巡检：checked=%s updated=%s removed=%s unreachable=%s",
-                    report["checked"],
-                    report["updated"],
-                    report["removed"],
-                    report["unreachable"],
-                )
-        except asyncio.CancelledError:
-            raise
-        except Exception:
-            log.exception("会话巡检出错")
+        now = time.monotonic()
+        if now >= next_session:
+            next_session = now + session_interval
+            try:
+                report = await check_registered_sessions(ctx)
+                if report["checked"]:
+                    log.info(
+                        "会话巡检：checked=%s updated=%s removed=%s unreachable=%s",
+                        report["checked"],
+                        report["updated"],
+                        report["removed"],
+                        report["unreachable"],
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("会话巡检出错")
+        if now >= next_job:
+            next_job = now + job_interval
+            try:
+                report = await check_tracked_jobs(ctx)
+                if report["checked"]:
+                    log.info(
+                        "作业巡检：checked=%s updated=%s",
+                        report["checked"],
+                        report["updated"],
+                    )
+            except asyncio.CancelledError:
+                raise
+            except Exception:
+                log.exception("作业巡检出错")
+        await asyncio.sleep(min(max(next_session, next_job) - time.monotonic(), 30.0))
 
 
 async def run_daemon(

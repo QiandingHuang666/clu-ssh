@@ -90,9 +90,51 @@ async def resources(
 
 
 @server.tool(name="submit", annotations=_WRITE)
-async def slurm_submit(connection: str, script: str) -> dict[str, Any]:
-    """提交 Slurm 批处理作业：脚本文本经 base64 上传后 sbatch，返回 job_id。"""
-    return await _call("slurm.submit", {"label": connection, "script": script})
+async def slurm_submit(
+    connection: str,
+    script: str,
+    name: str | None = None,
+    partition: str | None = None,
+    nodes: int | None = None,
+    cpus: int | None = None,
+    gpus: int | None = None,
+    time_limit: str | None = None,
+) -> dict[str, Any]:
+    """提交 Slurm 批处理作业：脚本写入 ~/.clu/jobs/<连接>/ 后 sbatch。
+
+    stdout/stderr 默认重定向到同目录 <name>-<时间>-%j.out/.err（脚本自带
+    #SBATCH -o/-e 时尊重脚本）；脚本内容、路径、资源与状态记入本地 jobs 台账。
+
+    Args:
+        connection: cluster 连接 label
+        script: sbatch 脚本内容（含 shebang）
+        name: 作业名（默认 job）
+        partition: 分区（脚本未声明时注入）
+        nodes: 节点数（脚本未声明时注入）
+        cpus: 每任务 CPU 核数
+        gpus: GPU 卡数（注入 --gres=gpu:N）
+        time_limit: 时限（如 4:00:00）
+    """
+    return await _call(
+        "slurm.submit",
+        {
+            "label": connection,
+            "script": script,
+            "name": name,
+            "partition": partition,
+            "nodes": nodes,
+            "cpus": cpus,
+            "gpus": gpus,
+            "time_limit": time_limit,
+        },
+    )
+
+
+@server.tool(name="job_list", annotations=_READONLY)
+async def job_list(connection: str | None = None, active_only: bool = False) -> dict[str, Any]:
+    """查询本地作业台账：脚本路径与内容、申请资源、节点、stdout/stderr 路径、
+    最近一次核对的状态（daemon 定期刷新）。"""
+    return await _call("job.list", {"label": connection, "active_only": active_only})
 
 
 @server.tool(name="log", annotations=_READONLY)
@@ -141,7 +183,8 @@ async def slurm_alloc(
     wait: float = 120.0,
 ) -> dict[str, Any]:
     """抢占资源并直接执行（绝不只返回命令）：tmux 内 salloc + srun bash，
-    分配后 attach 即入计算节点 shell，断线不丢资源。
+    分配后 attach 即入计算节点 shell，断线不丢资源。同名 purpose 已有活会话时返回
+    state="exists"（附 job 与接入/释放指引）——不会静默复用旧会话。
 
     抢占选择自动完成（无需先查询）：resource 缺省 = GPU 优先、无空闲 GPU 回退 CPU；
     resource=gpu / cpu 只抢该类（无则失败并附当前余量摘要）；

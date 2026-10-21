@@ -32,7 +32,8 @@ claude mcp add --scope user clu -- clu-mcp
 |---|---|
 | `exec` | 远程执行单条命令（受安全门约束） |
 | `jobs` / `status` / `log` | 作业列表 / 集群概览 / 作业日志（只读） |
-| `submit` / `cancel` | 提交 / 取消作业 |
+| `submit` / `cancel` | 提交作业（脚本/日志入 `~/.clu/jobs/`，台账可查）/ 取消作业 |
+| `job_list` | 作业台账（状态定期核对，只读） |
 | `ledger_query` | 检索执行留痕（跨会话记忆，只读） |
 | `connection_list` | 连接与连接池状态（只读） |
 

@@ -194,8 +194,11 @@ async def probe_session(
             "error": error,
         }
     log = await tmux.read_log(runner, label, purpose, tail=log_tail)
-    granted = GRANTED.search(log)
-    node = NODES.search(log)
+    # 日志跨重建累积（tee/pipe-pane 追加）：取最后一次授予，否则重建后报旧 job_id
+    granted_jobs = GRANTED.findall(log)
+    granted = granted_jobs[-1] if granted_jobs else None
+    nodes_found = NODES.findall(log)
+    node = nodes_found[-1] if nodes_found else None
     if granted is None:
         return {
             "connection": label,
@@ -209,8 +212,8 @@ async def probe_session(
         "purpose": purpose,
         "session": name,
         "state": "granted",
-        "job_id": granted.group(1),
-        "node": node.group(1) if node else None,
+        "job_id": granted,
+        "node": node,
     }
 
 
@@ -288,6 +291,23 @@ async def allocate(
 
     request_desc = describe_request(shown_resource, gpus, cpus, partition)
     name = tmux.session_name(label, purpose)
+    # 同名活会话保护（用户裁决 B）：活着即报 exists，防"以为新抢了卡实际复用旧的"
+    if await tmux.has_session(runner, name):
+        current = await probe_session(runner, label, purpose)
+        return {
+            "connection": label,
+            "purpose": purpose,
+            "session": name,
+            "state": "exists",
+            "job_id": current.get("job_id"),
+            "node": current.get("node"),
+            "request": request_desc,
+            "error": (
+                f"会话 {name} 已在运行（job={current.get('job_id')}，"
+                f"state={current.get('state')}）：clu attach {label} {purpose} 接入，"
+                f"或先 session_release 后重新申请"
+            ),
+        }
     await runner("mkdir -p $HOME/.clu/alloc/" + shlex.quote(label))
     # 瞬死故障转移：提交被弹回/秒级收回（实测贵大忙分区竞态）时
     # 自动重试并轮换候选分区，单分区最多 2 次

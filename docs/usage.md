@@ -68,6 +68,10 @@ clu resources LABEL [--partition P] [--cpu-free|--cpu-gpu-free|--fully-idle]
 clu alloc    LABEL [--gpu|--cpu] [--gpus N] [--cpus N] [-p 分区] [--purpose 名]
                                             抢占资源（默认 GPU 优先回退 CPU）
 clu exec     LABEL COMMAND... [--timeout]   远程执行（受安全门约束）
+clu submit   LABEL -f script.sh [--name N] [-p 分区] [-N 节点] [-c 核数]
+                     [--gpus N] [-t 时限]     提交批处理作业（stdin 亦可）
+clu job      list [LABEL] [--active]      作业台账（daemon 定期核对状态）
+             log LABEL JOB_ID [--tail N]  读台账作业的 stdout/stderr
 clu session  list [LABEL]                 tmux 托管会话
                release LABEL PURPOSE|--all    释放会话（资源归还集群）
 clu attach   LABEL PURPOSE                接入托管会话的 tmux（交互式）
@@ -93,7 +97,8 @@ claude mcp add clu -- clu-mcp
 | `exec` | 远程执行单条命令（安全门在 server 端强制生效） |
 | ○ `jobs` / ○ `status` | 作业列表 / 分区与队列概览（需 cluster 连接） |
 | ○ `resources` | **资源余量**：每分区 CPU/GPU 的总量/已占/空闲与节点数（单次往返，数据源为节点 AllocTRES 权威值）。一开始就能限定范围：`filter=cpu_free`（有空闲 CPU）、`cpu_gpu_free`（CPU 和 GPU 都有空闲）、`fully_idle`（CPU+GPU 全空闲），`gpu_only=true` 只看有 GPU 的节点（可叠加）；带过滤自动附节点明细 |
-| `submit` / `cancel` | 提交脚本（base64 上传）/ 取消作业 |
+| `submit` / `cancel` | 提交作业（可指定分区/节点/CPU/GPU/时限；脚本与 stdout/stderr 统一落远端 `~/.clu/jobs/<连接>/`，脚本内容与路径记入本地台账）/ 取消作业 |
+| ○ `job_list` | 作业台账：提交历史、脚本路径与内容、申请资源、节点、日志路径、最近核对状态（只读） |
 | ○ `log` | 作业 stdout（自动定位路径并 tail） |
 | `alloc` | **抢占接口（自动选择，无需先查询）**：resource 缺省 = GPU 优先、无空闲 GPU 回退 CPU；`resource=gpu/cpu` 只抢该类；`gpus`/`cpus`/`partition` 可指定（GPU 抢占可与 cpus 组合）。分区按单节点余量（含 CPU 核数需求）排名、提交被弹回自动轮换候选。granted 后 `clu attach` 即入计算节点 shell。**CPU 核数默认策略**：GPU 抢占未指定时取 profile 的 `alloc_default_cpus`（未配置则集群 slurm 默认，通常 1 核）；CPU 抢占未指定默认 4 核 |
 | ○ `session_list` / ○ `session_info` / `session_release` | 托管会话查看与释放 |
@@ -116,6 +121,14 @@ claude mcp add clu -- clu-mcp
 
 **断线续传场景**：alloc 会话在远端 tmux 里，笔记本断网、换地方、
 重启 Claude Code 都不影响；`clu session list` 随时可查。
+
+**提交批处理作业**：
+> "用 clu 把这个脚本提交到 gpu 分区，2 张卡"
+> `submit(connection="cluster-r", script=..., name="train", partition="gpu-a100", gpus=1, cpus=16)`
+> 或命令行：`clu submit cluster-r -f train.slurm -p gpu-a100 --gpus 1 -c 16`
+>
+> 脚本与日志落在远端 `~/.clu/jobs/<连接>/`；`clu job list` 看状态（daemon 每 60s 自动核对），
+> `clu job log cluster-r <job_id>` 读 stdout/stderr。
 
 **传文件**：
 > "把 ./data.csv 上传到 gzu 的 ~/data/ 下" / "把 gzu:~/result.tar 下载到 ./out/"
