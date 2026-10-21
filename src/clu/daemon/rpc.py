@@ -321,6 +321,17 @@ async def _slurm_alloc(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, 
         job_id=str(info.get("job_id") or "") or None,
         summary=f"alloc {purpose}: {info.get('state')} partition={info.get('partition')}",
     )
+    if info.get("state") in ("granted", "pending"):  # 会话登记：daemon 重启后零探测恢复
+        await ctx.ledger.upsert_session(
+            label=label,
+            purpose=purpose,
+            job_id=info.get("job_id"),
+            node=info.get("node"),
+            partition=info.get("partition"),
+            gpus=info.get("gpus"),
+            cpus=info.get("cpus"),
+            state=str(info.get("state")),
+        )
     return info
 
 
@@ -345,8 +356,34 @@ async def _session_list(ctx: DaemonContext, params: dict[str, Any]) -> dict[str,
             return [], {"connection": one, "error": f"{type(exc).__name__}: {exc}"[:160]}
 
     pairs = await asyncio.gather(*(probe(one) for one in labels))
-    sessions = [row for rows, _ in pairs for row in rows]
+    live = {(str(r["connection"]), str(r["purpose"])): r for rows, _ in pairs for r in rows}
     unreachable = [err for _, err in pairs if err is not None]
+
+    # 登记表合并：本地库即知持有（daemon 重启/连接不可达时仍秒回）；
+    # 可达连接做存活校验（tmux 已亡则销账），远端库外会话补录
+    registry = await ctx.ledger.list_sessions()
+    merged: dict[tuple[str, str], dict[str, object]] = {}
+    dead = {str(e["connection"]) for e in unreachable}
+    for row in registry:
+        key = (str(row["label"]), str(row["purpose"]))
+        if key[0] not in data.connections:  # 连接已删除：销账
+            await ctx.ledger.delete_session(*key)
+            continue
+        merged[key] = dict(row, connection=row["label"])
+        if key[0] in dead:
+            merged[key]["verified"] = False  # 不可达：上次已知状态
+        elif key in live:
+            merged[key]["verified"] = True
+        else:
+            await ctx.ledger.delete_session(*key)  # tmux 已亡：资源已释放
+            merged.pop(key)
+    for key, row in live.items():
+        if key not in merged:
+            merged[key] = dict(row, verified=True, state="granted", source="tmux")
+            await ctx.ledger.upsert_session(  # 收编库外会话（旧版本/库丢失遗留）
+                label=key[0], purpose=key[1], state="granted", partition=None
+            )
+    sessions = sorted(merged.values(), key=lambda r: str(r.get("updated_ts") or ""))
     return {"sessions": sessions, "unreachable": unreachable}
 
 
@@ -355,7 +392,16 @@ async def _session_info(ctx: DaemonContext, params: dict[str, Any]) -> dict[str,
     label = str(params["label"])
     purpose = str(params["purpose"])
     _get_connection(ctx, label)
-    return await allocops.session_info(_runner(ctx, label), label, purpose)
+    info = await allocops.session_info(_runner(ctx, label), label, purpose)
+    if info.get("state") == "granted":  # 顺带刷新登记表
+        await ctx.ledger.upsert_session(
+            label=label,
+            purpose=purpose,
+            job_id=info.get("job_id"),
+            node=info.get("node"),
+            state="granted",
+        )
+    return info
 
 
 @dispatcher.method("session.release")
@@ -364,6 +410,7 @@ async def _session_release(ctx: DaemonContext, params: dict[str, Any]) -> dict[s
     purpose = str(params["purpose"])
     _get_connection(ctx, label)
     result = await allocops.release(_runner(ctx, label), label, purpose)
+    await ctx.ledger.delete_session(label, purpose)
     await ctx.ledger.record(
         kind="release",
         connection=label,

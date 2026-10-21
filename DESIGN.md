@@ -110,7 +110,9 @@ preempt_partition = "..." # 抢占模式使用的分区
 
 - 所有交互式资源（salloc）与长任务在远端 tmux 会话内运行，
   命名规范 `clu/<connection_label>/<purpose>`
-- daemon 持有"tmux 会话 → 意图/关联 job/资源"映射表（重启后可从 tmux 列表恢复）
+- 真相分层：远端 tmux 为存活真相，本地 SQLite 会话登记表（label/purpose/job/node/
+  分区/资源/状态）为缓存——alloc 落库、release 销账、列表秒回 + 探测校验存活、
+  daemon 重启或连接不可达时按登记表给出上次已知状态（验收期升级）
 - `clu attach <label>/<purpose>` 人类直接接入
 - saloc 获得分配后 `sleep infinity` 占住资源（继承旧 skill 抢占语义）
 
