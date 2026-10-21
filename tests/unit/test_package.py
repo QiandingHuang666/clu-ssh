@@ -24,3 +24,17 @@ def test_console_script_uses_cli_main() -> None:
 def test_package_name_is_clu_ssh() -> None:
     data = tomllib.loads(PYPROJECT.read_text())
     assert data["project"]["name"] == "clu-ssh"
+
+
+def test_mcp_main_rejects_tty(monkeypatch) -> None:
+    """clu-mcp 被人手工运行（stdin 是 tty）时应提示并退出，不挂起。"""
+    import pytest
+
+    from clu import mcp_server
+
+    monkeypatch.setattr(
+        "sys.stdin", type("FakeStdin", (), {"isatty": staticmethod(lambda: True)})()
+    )
+    with pytest.raises(SystemExit) as exc:
+        mcp_server.main()
+    assert exc.value.code == 2

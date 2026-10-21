@@ -214,6 +214,17 @@ async def connection_list() -> dict[str, Any]:
 
 def main() -> None:
     """stdio 入口；daemon 缺席时自动拉起。"""
+    import sys
+
+    if sys.stdin.isatty():
+        # 被人手工在终端里跑：给提示而不是挂在 stdio 上等握手
+        print(
+            "clu-mcp 是 MCP stdio 服务，需由 MCP 客户端拉起（不是直接运行）。\n"
+            "接入 Claude Code：claude mcp add clu -- clu-mcp",
+            file=sys.stderr,
+        )
+        raise SystemExit(2)
+
     import asyncio
 
     from clu.client import CluError
