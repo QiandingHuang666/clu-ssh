@@ -511,6 +511,45 @@ def session_release(
         _fail(f"不存在：{label}/{purpose}")
 
 
+@app.command("jobs")
+def jobs_cmd(
+    label: str = typer.Argument(..., help="cluster 连接 label。"),
+    states: str = typer.Option(None, "--states", help="过滤状态，逗号分隔（如 RUNNING,PENDING）。"),
+) -> None:
+    """查看集群实时队列（当前用户作业，squeue 实时查询）。"""
+    state_list = [s.strip().upper() for s in states.split(",")] if states else None
+    try:
+        ensure_daemon()
+        result = _do_request("slurm.jobs", {"label": label, "states": state_list})
+    except CluError as exc:
+        _fail(f"查询失败：{exc.message}")
+        return
+    raw = result.get("jobs")
+    rows = [dict(r) for r in raw if isinstance(r, dict)] if isinstance(raw, list) else []
+    if not rows:
+        console.print("当前没有匹配的作业")
+        return
+    table = Table(title=f"{label} 实时队列")
+    for col in ("job_id", "状态", "名称", "分区", "已运行", "时限", "节点", "CPU", "GPU", "原因"):
+        table.add_column(col)
+    for r in rows:
+        state = str(r.get("state") or "")
+        style = "green" if state == "RUNNING" else ("yellow" if state in ("PENDING",) else "red")
+        table.add_row(
+            str(r.get("job_id")),
+            f"[{style}]{state}[/{style}]",
+            str(r.get("name") or "-"),
+            str(r.get("partition") or "-"),
+            str(r.get("elapsed") or "-"),
+            str(r.get("time_limit") or "-"),
+            str(r.get("nodes") or "-"),
+            str(r.get("cpus") or "-"),
+            str(r.get("gres") or "-"),
+            str(r.get("reason") or "-"),
+        )
+    console.print(table)
+
+
 @app.command("submit")
 def submit_cmd(
     label: str,

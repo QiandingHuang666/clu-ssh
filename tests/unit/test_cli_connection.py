@@ -111,3 +111,33 @@ def test_session_release_cli(monkeypatch) -> None:
 
     result = runner.invoke(app, ["session", "release", "cl"])
     assert result.exit_code == 1  # 缺 PURPOSE 且无 --all
+
+
+def test_jobs_cmd_renders(monkeypatch) -> None:
+    import clu.cli as cli_mod
+
+    def fake_do_request(method: str, params: dict) -> dict:
+        assert method == "slurm.jobs"
+        assert params["states"] == ["RUNNING"]
+        return {
+            "jobs": [
+                {
+                    "job_id": "12345",
+                    "state": "RUNNING",
+                    "name": "train",
+                    "partition": "gpu",
+                    "elapsed": "01:00",
+                    "time_limit": "4:00:00",
+                    "nodes": "1",
+                    "cpus": "8",
+                    "gres": "gpu:A100:1",
+                    "reason": "None",
+                }
+            ]
+        }
+
+    monkeypatch.setattr(cli_mod, "_do_request", fake_do_request)
+    monkeypatch.setattr(cli_mod, "ensure_daemon", lambda: None)
+    result = runner.invoke(app, ["jobs", "cl", "--states", "running"], env={"COLUMNS": "200"})
+    assert result.exit_code == 0
+    assert "12345" in result.output and "RUNNING" in result.output

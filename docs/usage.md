@@ -67,6 +67,7 @@ clu exec     LABEL COMMAND...
 clu resources LABEL [过滤]
 clu alloc    LABEL [资源]
 clu attach   LABEL PURPOSE
+clu jobs     LABEL [--states RUNNING,PENDING]   实时队列（squeue 实时查询）
 clu submit   LABEL [-f 脚本 | --script 内容 | stdin]
 clu job      list | log
 clu session  list | release
@@ -135,6 +136,8 @@ clu submit gzu --script "#!/bin/bash
 hostname
 " --name probe
 
+clu jobs gzu                  # 实时队列（当前用户全部作业）
+clu jobs gzu --states RUNNING # 只看运行中
 clu job list gzu              # 台账（脚本路径/资源/节点/状态/提交时间）
 clu job list gzu --active     # 只看非终态
 clu job log gzu 12345         # 读台账作业的 stdout/stderr（--tail N）
