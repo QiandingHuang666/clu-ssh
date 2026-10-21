@@ -176,7 +176,7 @@ def _availability_note(data: dict[str, object]) -> str:
     return "; ".join(parts[:8]) or "无空闲资源"
 
 
-async def _probe(
+async def probe_session(
     runner: Runner, label: str, purpose: str, *, log_tail: int = 50
 ) -> dict[str, object]:
     """读取会话现状：tmux 存在性 + 日志中的分配信息。"""
@@ -305,7 +305,7 @@ async def allocate(
         created_at = time.monotonic()
         await tmux.create_session(runner, name, salloc_cmd, log_file=tmux.log_path(label, purpose))
         while True:
-            info = await _probe(runner, label, purpose)
+            info = await probe_session(runner, label, purpose)
             if info["state"] != "pending":
                 break
             if time.monotonic() >= deadline:
@@ -327,7 +327,7 @@ async def allocate(
     chosen_by = chosen_by or ("auto-cpu" if resource == "cpu" else "auto-gpu")
     if info["state"] == "granted" and not info.get("node"):
         await asyncio.sleep(1.0)  # Nodes ready 行略晚于 Granted，补读一次
-        info = await _probe(runner, label, purpose)
+        info = await probe_session(runner, label, purpose)
     return dict(
         info,
         request=request_desc,
@@ -339,7 +339,7 @@ async def allocate(
 
 
 async def session_info(runner: Runner, label: str, purpose: str) -> dict[str, object]:
-    return await _probe(runner, label, purpose, log_tail=100)
+    return await probe_session(runner, label, purpose, log_tail=100)
 
 
 async def release(runner: Runner, label: str, purpose: str) -> dict[str, object]:

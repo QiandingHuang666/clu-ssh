@@ -21,6 +21,7 @@ from clu.ledger.query import LedgerFilter
 from clu.policy import check_exec, check_submit_script
 from clu.profiles import Profile
 from clu.protocol import ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, ERR_NOT_FOUND
+from clu.slurm.alloc import probe_session
 from clu.ssh.connection import CluConnectionError, ExecResult
 from clu.ssh.forward import ForwardError, ForwardManager
 from clu.ssh.pool import ConnectionPool
@@ -337,16 +338,21 @@ async def _slurm_alloc(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, 
 
 @dispatcher.method("session.list")
 async def _session_list(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
-    """托管会话列表。多连接时并行探测、单连接尽力而为——
-    不可达的连接降级为 unreachable 标注（一台关机的机器不该拖死全局）。"""
-    label = params.get("label")
+    """托管会话列表——登记表驱动：只探测有登记会话的连接（每连接一次 tmux 列举），
+    逐会话校验存活（tmux 已亡自动销账）。deep=True 才全量扫描所有连接（收编库外会话）。
+    不可达连接降级为上次已知状态（stale），不炸全局。"""
+    deep = bool(params.get("deep"))
+    registry = await ctx.ledger.list_sessions()
     data = ctx.store.load()
-    if label is not None:
-        if str(label) not in data.connections:
-            raise RpcFailure(ERR_NOT_FOUND, f"未知连接：{label}")
-        labels = [str(label)]
+
+    if deep:
+        labels = [str(name) for name in data.connections]
     else:
-        labels = list(data.connections)
+        labels = []
+        for row in registry:
+            lbl = str(row["label"])
+            if lbl in data.connections and lbl not in labels:
+                labels.append(lbl)
 
     async def probe(one: str) -> tuple[list[dict[str, object]], dict[str, object] | None]:
         try:
@@ -358,33 +364,76 @@ async def _session_list(ctx: DaemonContext, params: dict[str, Any]) -> dict[str,
     pairs = await asyncio.gather(*(probe(one) for one in labels))
     live = {(str(r["connection"]), str(r["purpose"])): r for rows, _ in pairs for r in rows}
     unreachable = [err for _, err in pairs if err is not None]
+    dead_conns = {str(e["connection"]) for e in unreachable}
 
-    # 登记表合并：本地库即知持有（daemon 重启/连接不可达时仍秒回）；
-    # 可达连接做存活校验（tmux 已亡则销账），远端库外会话补录
-    registry = await ctx.ledger.list_sessions()
     merged: dict[tuple[str, str], dict[str, object]] = {}
-    dead = {str(e["connection"]) for e in unreachable}
     for row in registry:
         key = (str(row["label"]), str(row["purpose"]))
         if key[0] not in data.connections:  # 连接已删除：销账
             await ctx.ledger.delete_session(*key)
             continue
         merged[key] = dict(row, connection=row["label"])
-        if key[0] in dead:
-            merged[key]["verified"] = False  # 不可达：上次已知状态
+        if key[0] in dead_conns:
+            merged[key]["verified"] = False  # 不可达：上次已知（stale）
         elif key in live:
             merged[key]["verified"] = True
         else:
-            await ctx.ledger.delete_session(*key)  # tmux 已亡：资源已释放
+            await ctx.ledger.delete_session(*key)  # tmux 已亡：销账
             merged.pop(key)
     for key, row in live.items():
         if key not in merged:
             merged[key] = dict(row, verified=True, state="granted", source="tmux")
-            await ctx.ledger.upsert_session(  # 收编库外会话（旧版本/库丢失遗留）
-                label=key[0], purpose=key[1], state="granted", partition=None
+            await ctx.ledger.upsert_session(  # 收编库外会话（deep 扫描或库丢失遗留）
+                label=key[0], purpose=key[1], state="granted"
             )
     sessions = sorted(merged.values(), key=lambda r: str(r.get("updated_ts") or ""))
-    return {"sessions": sessions, "unreachable": unreachable}
+    return {"sessions": sessions, "unreachable": unreachable, "checked": labels}
+
+
+async def check_registered_sessions(ctx: "DaemonContext") -> dict[str, int]:
+    """巡检一轮登记表：逐会话探测刷新状态；消亡自动销账并记留痕。"""
+    registry = await ctx.ledger.list_sessions()
+    data = ctx.store.load()
+    updated = kept = 0
+    removed: list[str] = []
+    for row in registry:
+        label, purpose = str(row["label"]), str(row["purpose"])
+        if label not in data.connections:
+            await ctx.ledger.delete_session(label, purpose)
+            removed.append(f"{label}/{purpose}")
+            continue
+        try:
+            info = await asyncio.wait_for(
+                probe_session(_runner(ctx, label), label, purpose), timeout=6.0
+            )
+        except Exception:
+            kept += 1
+            continue
+        state = str(info.get("state"))
+        if state == "failed":
+            await ctx.ledger.delete_session(label, purpose)
+            await ctx.ledger.record(
+                kind="release",
+                connection=label,
+                command=f"watchdog {purpose}",
+                summary=f"会话消亡自动销账：{purpose}",
+            )
+            removed.append(f"{label}/{purpose}")
+        else:
+            await ctx.ledger.upsert_session(
+                label=label,
+                purpose=purpose,
+                state=state,
+                job_id=info.get("job_id"),
+                node=info.get("node"),
+            )
+            updated += 1
+    return {
+        "checked": len(registry),
+        "updated": updated,
+        "removed": len(removed),
+        "unreachable": kept,
+    }
 
 
 @dispatcher.method("session.info")

@@ -289,11 +289,16 @@ def _do_request(method: str, params: dict[str, object]) -> dict[str, object]:
 
 
 @session_app.command("list")
-def session_list(label: str = typer.Argument(None, help="连接 label；缺省列出全部。")) -> None:
-    """列出 tmux 托管会话（alloc 资源会话）。"""
+def session_list(
+    label: str = typer.Argument(None, help="连接 label；缺省按登记表检查全部会话。"),
+    deep: bool = typer.Option(
+        False, "--deep", help="全量扫描所有连接的 tmux（收编登记表外的会话）。"
+    ),
+) -> None:
+    """列出 tmux 托管会话（登记表驱动，含存活校验与自动销账）。"""
     try:
         ensure_daemon()
-        result = _do_request("session.list", {"label": label})
+        result = _do_request("session.list", {"label": label, "deep": deep})
     except CluError as exc:
         _fail(f"查询失败：{exc.message}")
         return

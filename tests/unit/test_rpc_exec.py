@@ -79,9 +79,9 @@ async def test_unknown_method(tmp_path: Path) -> None:
         await dispatcher.dispatch(ctx, "nope", {})
 
 
-async def test_session_list_best_effort(tmp_path: Path) -> None:
-    """一台连接不可达只降级标注，不炸全局；好连接的会话照常返回。"""
-    from clu.daemon.rpc import dispatcher
+async def test_session_list_registry_driven(tmp_path: Path) -> None:
+    """登记表驱动：只探有登记会话的连接；不可达降级 stale；巡检销账消亡会话。"""
+    from clu.daemon.rpc import check_registered_sessions, dispatcher
 
     class SelectivePool(FakePool):
         async def run(
@@ -93,6 +93,9 @@ async def test_session_list_best_effort(tmp_path: Path) -> None:
                 raise CluConnectionError("Host is unreachable")
             if command.startswith("tmux list-sessions"):
                 return ExecResult(command, 0, "clu/good/train|1700000000|0\n", "", 1)
+            if command.startswith("tmux has-session"):
+                ok = "train" in command  # 只有 train 会话真实存在
+                return ExecResult(command, 0 if ok else 1, "", "", 1)
             return ExecResult(command, 0, "", "", 1)
 
     store = ConfigStore(tmp_path / "connections.toml")
@@ -100,9 +103,25 @@ async def test_session_list_best_effort(tmp_path: Path) -> None:
     store.add_connection(ConnectionConfig(label="dead", kind="local", host="h", user="u"))
     ledger = Ledger(tmp_path / "l.sqlite3")
     await ledger.open()
+    await ledger.upsert_session(label="good", purpose="train", state="granted", job_id="42")
+    await ledger.upsert_session(label="dead", purpose="old", state="granted", job_id="7")
     ctx = DaemonContext(
         store=store, pool=SelectivePool(), ledger=ledger, socket_path=tmp_path / "s.sock"
     )
+
     result = await dispatcher.dispatch(ctx, "session.list", {})
-    assert [s["purpose"] for s in result["sessions"]] == ["train"]
-    assert [u["connection"] for u in result["unreachable"]] == ["dead"]
+    assert result["checked"] == ["good", "dead"]  # 有登记的连接才探
+    by_conn = {s["connection"]: s for s in result["sessions"]}
+    assert by_conn["good"]["verified"] is True
+    assert by_conn["dead"]["verified"] is False  # stale：上次已知
+    assert by_conn["dead"]["job_id"] == "7"
+
+    result = await dispatcher.dispatch(ctx, "session.list", {"deep": True})
+    assert set(result["checked"]) == {"good", "dead"}
+
+    await ledger.upsert_session(label="good", purpose="gone", state="granted", job_id="9")
+    report = await check_registered_sessions(ctx)
+    assert report["checked"] == 3
+    assert report["removed"] == 1  # good/gone 的 tmux 不在 -> 销账
+    remaining = {f"{r['label']}/{r['purpose']}" for r in await ledger.list_sessions()}
+    assert remaining == {"good/train", "dead/old"}

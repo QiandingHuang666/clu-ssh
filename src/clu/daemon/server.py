@@ -94,6 +94,28 @@ def _prepare_socket(path: Path) -> None:
         path.unlink()  # 调用方（lifecycle.ensure）保证无存活 daemon 后才拉起
 
 
+async def _session_watch(ctx: "DaemonContext") -> None:
+    """定期巡检登记会话：状态刷新与消亡销账（间隔见 constants.SESSION_CHECK_INTERVAL）。"""
+    from clu.daemon.rpc import check_registered_sessions
+
+    while True:
+        await asyncio.sleep(C.SESSION_CHECK_INTERVAL)
+        try:
+            report = await check_registered_sessions(ctx)
+            if report["checked"]:
+                log.info(
+                    "会话巡检：checked=%s updated=%s removed=%s unreachable=%s",
+                    report["checked"],
+                    report["updated"],
+                    report["removed"],
+                    report["unreachable"],
+                )
+        except asyncio.CancelledError:
+            raise
+        except Exception:
+            log.exception("会话巡检出错")
+
+
 async def run_daemon(
     *,
     socket_path: Path | None = None,
@@ -137,9 +159,11 @@ async def run_daemon(
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
         loop.add_signal_handler(sig, ctx.shutdown.set)
+    watcher = asyncio.create_task(_session_watch(ctx))
     try:
         await ctx.shutdown.wait()
     finally:
+        watcher.cancel()
         log.info("daemon 退出")
         server.close()
         await server.wait_closed()
