@@ -26,6 +26,15 @@ jobs:
           uv run ruff check .
           uv run mypy
           uv run pytest
+      - name: 幂等检查（版本已在 PyPI 则跳过）
+        run: |
+          VERSION=$(uv run python -c "import clu; print(clu.__version__)")
+          if curl -sf "https://pypi.org/pypi/clu-ssh/${VERSION}/json" >/dev/null; then
+            echo "clu-ssh ${VERSION} 已在 PyPI（可能被 yank），跳过发布"
+            echo "skip_publish=true" >> "$GITHUB_ENV"
+          fi
       - run: uv build
+        if: env.skip_publish != 'true'
       - name: 发布至 PyPI
+        if: env.skip_publish != 'true'
         run: uv publish --token "${{ secrets.PYPI_TOKEN }}"
