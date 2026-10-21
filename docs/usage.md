@@ -226,7 +226,7 @@ clu forward list && clu forward remove fwd-1
 2. **server 端硬规则**（不可绕过，任何客户端生效）：
    - **危险黑名单**：递归删除根/系统目录/家目录、`mkfs`、`dd of=/dev/*`、
      `shutdown/reboot`、`scancel --all`、fork 炸弹等 → 直接拒绝
-   - **登录节点重操作拦截**：在 `cluster` 连接上跑训练/编译/装环境
+   - **登录节点重操作拦截**（profile 设 `heavy_guard = false` 可关闭）：在 `cluster` 连接上跑训练/编译/装环境
      （torchrun、`make -j`、`pip install` 等，profile 可增删）→ 拒绝并建议
      submit/alloc
 

@@ -86,8 +86,17 @@ def dangerous_hits(command: str) -> list[str]:
     return hits
 
 
-def check_exec(command: str, *, kind: str, extra_heavy: list[str] | None = None) -> PolicyDecision:
-    """exec 前的完整判定：危险黑名单（任何 kind）+ 登录节点重操作（cluster）。"""
+def check_exec(
+    command: str,
+    *,
+    kind: str,
+    extra_heavy: list[str] | None = None,
+    heavy_guard: bool = True,
+) -> PolicyDecision:
+    """exec 前的完整判定：危险黑名单（任何 kind）+ 登录节点重操作（cluster）。
+
+    heavy_guard=False（profile 显式关闭）时跳过重操作规则；危险黑名单不受影响。
+    """
     hits = dangerous_hits(command)
     if hits:
         return PolicyDecision(
@@ -96,7 +105,7 @@ def check_exec(command: str, *, kind: str, extra_heavy: list[str] | None = None)
             message=f"危险命令被拒绝（命中黑名单模式：{hits[0]}）",
             suggestion="如确需执行，请人工登录操作；此规则不可绕过",
         )
-    if kind == "cluster":
+    if kind == "cluster" and heavy_guard:
         heavy = _DEFAULT_HEAVY_PATTERNS + list(extra_heavy or [])
         for pattern in heavy:
             if re.search(pattern, command):

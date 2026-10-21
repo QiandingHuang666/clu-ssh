@@ -174,7 +174,10 @@ async def _exec(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
     timeout = float(params.get("timeout") or 60.0)
     cfg, profile = _get_connection(ctx, label)
     decision = check_exec(
-        command, kind=cfg.kind, extra_heavy=profile.heavy_patterns if profile else None
+        command,
+        kind=cfg.kind,
+        extra_heavy=profile.heavy_patterns if profile else None,
+        heavy_guard=profile.heavy_guard if profile else True,
     )
     if not decision.allowed:
         raise RpcFailure("policy_denied", f"{decision.message}；建议：{decision.suggestion}")

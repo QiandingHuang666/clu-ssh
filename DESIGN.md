@@ -83,7 +83,7 @@ profile = "gzu"           # 可选：定制 profile
 
 [profiles.gzu]
 public_dirs = ["/public/home", "/public/soft"]
-heavy_guard = true        # 登录节点重操作拦截（默认全局开启，profile 可加名单）
+heavy_guard = true        # 登录节点重操作拦截（profile 可关；默认开启，可加名单）
 preempt_partition = "..." # 抢占模式使用的分区
 ```
 
@@ -231,7 +231,7 @@ Code 侧配置免确认白名单。
 
 **第二层：server 端硬规则**（极薄，仅两条）：
 
-1. **登录节点重操作拦截**：在 `kind=cluster` 的登录节点上命中重操作模式 →
+1. **登录节点重操作拦截**：在 `kind=cluster` 的登录节点上命中重操作模式（`profile.heavy_guard=false` 可关闭）→
    拒绝并建议 alloc/submit。初始名单（profile 可增）：
    `torchrun`、`deepspeed`、`accelerate launch`、`python -m torch.distributed`、
    `make -j`、`cmake --build`、`conda create/install`、`pip install`（大包场景）

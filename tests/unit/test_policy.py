@@ -88,3 +88,10 @@ def test_submit_script_only_checks_dangerous() -> None:
     """脚本里跑重活是提交的本意，只拦危险命令。"""
     assert check_submit_script("#!/bin/bash\ntorchrun train.py").allowed
     assert not check_submit_script("#!/bin/bash\nrm -rf /").allowed
+
+
+def test_heavy_guard_can_be_disabled() -> None:
+    """profile heavy_guard=false 时放行重操作（危险黑名单仍生效）。"""
+    assert not check_exec("torchrun train.py", kind="cluster").allowed
+    assert check_exec("torchrun train.py", kind="cluster", heavy_guard=False).allowed
+    assert not check_exec("rm -rf /", kind="cluster", heavy_guard=False).allowed
