@@ -175,14 +175,53 @@ CREATE INDEX idx_exec_conn ON exec_records(connection);
 
 不做事务/计划模型。检索 = `ledger_query` 结构化过滤。
 
-### 7.1 作业台账（v1 验收期新增）
+### 7.1 会话登记（v1 验收期新增）
 
-`jobs` 表记录每次 sbatch 提交：`(connection, job_id)` 主键、名称、脚本内容与远端路径、
-申请资源（分区/节点/CPU/GPU/时限）、实际节点、stdout/stderr 路径、状态与时间戳。
+```sql
+CREATE TABLE sessions (
+    label       TEXT NOT NULL,      -- 连接 label
+    purpose     TEXT NOT NULL,      -- 用途名（tmux: clu/<label>/<purpose>）
+    job_id      TEXT,
+    node        TEXT,
+    partition   TEXT,
+    gpus        INTEGER,
+    cpus        INTEGER,
+    state       TEXT NOT NULL,      -- pending | granted
+    updated_ts  TEXT NOT NULL,
+    PRIMARY KEY (label, purpose)
+);
+```
 
-- 提交即入库（状态 PENDING/RUNNING 由 sbatch 返回与后续核对更新）
+生命周期：pending → granted → released/dead（销账）；连接不可达为 stale（不销账）。
+alloc 落库、release 销账、session.info/巡检刷新；session.list 登记表驱动检查。
+
+### 7.2 作业台账（v1 验收期新增）
+
+```sql
+CREATE TABLE jobs (
+    connection      TEXT NOT NULL,
+    job_id          TEXT NOT NULL,
+    name            TEXT,
+    script_path     TEXT,           -- 远端绝对路径（sbatch 不展开 $HOME）
+    script          TEXT,           -- 完整脚本内容（含注入的 #SBATCH 指令）
+    partition       TEXT,
+    requested_nodes TEXT,
+    cpus            INTEGER,
+    gpus            INTEGER,
+    node_list       TEXT,           -- 实际节点（squeue/sacct）
+    stdout_path     TEXT,           -- %j 已解析为 job_id
+    stderr_path     TEXT,
+    state           TEXT NOT NULL,
+    exit_code       TEXT,
+    submitted_ts    TEXT NOT NULL,
+    updated_ts      TEXT NOT NULL,
+    PRIMARY KEY (connection, job_id)
+);
+```
+
+- 提交即入库（PENDING；核对后更新）
 - daemon 每 `JOB_CHECK_INTERVAL`（默认 60s）核对非终态作业：squeue 取实时状态，
-  已消失的用 sacct 补终态（COMPLETED/FAILED/CANCELLED/TIMEOUT/...），更新入库
+  已消失的用 sacct 补终态（COMPLETED/FAILED/CANCELLED/TIMEOUT/...）
 - 终态作业保留（历史可查），不删除
 
 ## 8. 安全模型（双层）

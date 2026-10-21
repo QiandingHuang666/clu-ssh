@@ -58,25 +58,101 @@ clu exec gzu "squeue -u $USER | head"
 
 ## 5. CLI 参考
 
+### 5.1 速查
+
 ```
-clu server   ensure | status | stop      daemon 生命周期
-clu connection  import [--overwrite]     从 ~/.ssh/config 一次性导入
-               add LABEL --host --user [--port] [--kind] [--identity] [--proxy] [--profile]
-               remove LABEL | list | check LABEL
-clu resources LABEL [--partition P] [--cpu-free|--cpu-gpu-free|--fully-idle]
-                            [--gpu-only] [--nodes]       集群资源余量（分区/节点的 CPU+GPU）
-clu alloc    LABEL [--gpu|--cpu] [--gpus N] [--cpus N] [-p 分区] [--purpose 名]
-                                            抢占资源（默认 GPU 优先回退 CPU）
-clu exec     LABEL COMMAND... [--timeout]   远程执行（受安全门约束）
-clu submit   LABEL -f script.sh [--name N] [-p 分区] [-N 节点] [-c 核数]
-                     [--gpus N] [-t 时限]     提交批处理作业（stdin 亦可）
-clu job      list [LABEL] [--active]      作业台账（daemon 定期核对状态）
-             log LABEL JOB_ID [--tail N]  读台账作业的 stdout/stderr
-clu session  list [LABEL]                 tmux 托管会话
-               release LABEL PURPOSE|--all    释放会话（资源归还集群）
-clu attach   LABEL PURPOSE                接入托管会话的 tmux（交互式）
-clu forward  add LABEL HOST PORT [--local-port N] | list | remove ID
-clu --version
+clu server   ensure | status | stop
+clu connection  import | add | remove | list | check
+clu exec     LABEL COMMAND...
+clu resources LABEL [过滤]
+clu alloc    LABEL [资源]
+clu attach   LABEL PURPOSE
+clu submit   LABEL [-f 脚本 | --script 内容 | stdin]
+clu job      list | log
+clu session  list | release
+clu forward  add | list | remove
+```
+
+### 5.2 逐条说明
+
+**连接**
+
+```bash
+clu connection import [--config ~/.ssh/config] [--overwrite]   # 一次性导入公钥条目
+clu connection add gzu --host hpc.example.edu.cn --user you --kind cluster \
+                     [--port 22] [--identity ~/.ssh/id_ed25519] [--proxy 跳板label] [--profile 名]
+clu connection remove gzu
+clu connection list                # 直读配置文件 + daemon 在线时附池状态
+clu connection check gzu           # 经连接池真连一次并执行 true
+```
+
+**远程执行**
+
+```bash
+clu exec gzu "squeue -u $USER"       # 受安全门约束（危险命令/登录节点重操作会拒绝）
+clu exec gzu "df -h" --timeout 30
+```
+
+**资源查询**
+
+```bash
+clu resources gzu                                  # 分区聚合（紧凑视图）
+clu resources gzu --partition gpu-a100             # 指定分区
+clu resources gzu --cpu-free                       # 只看有空闲 CPU 的节点
+clu resources gzu --cpu-gpu-free --gpu-only        # CPU+GPU 都空闲，且只看 GPU 节点
+clu resources gzu --fully-idle                     # CPU 与 GPU 全空闲
+clu resources gzu --nodes                          # 附节点明细表
+```
+
+**抢占 / 交互式资源**
+
+```bash
+clu alloc gzu                                 # 默认 GPU 优先，无 GPU 空闲回退 CPU
+clu alloc gzu --gpu --gpus 2 --cpus 16        # 指定卡数与核数
+clu alloc gzu --cpu --cpus 8                  # 只抢 CPU
+clu alloc gzu -p gpu-a100-8card --purpose train --wait 60
+# 输出 granted 后：
+clu attach gzu train        # 进入计算节点 shell（exit 即释放）
+clu session list gzu        # 查看托管会话（--deep 全量扫描所有连接）
+clu session release gzu train       # 释放单个
+clu session release gzu --all       # 释放该连接全部
+```
+
+抢占选择逻辑：分区按**单节点可满足度**排名（GPU 数/CPU 核数都够才算），
+提交被弹回时自动轮换候选分区；默认核数 = `min(节点总核÷节点总卡, 节点空闲核)`。
+
+**批处理作业**
+
+```bash
+# 从文件提交（推荐）
+clu submit gzu -f train.slurm --name train -p gpu-a100 --gpus 1 -c 16 -t 4:00:00
+
+# 从标准输入提交
+echo -e '#!/bin/bash\necho hi' | clu submit gzu --name echo-test -p cpu56c256g -c 1 -t 0:05:00
+
+# 从字面量提交
+clu submit gzu --script "#!/bin/bash
+hostname
+" --name probe
+
+clu job list gzu              # 台账（脚本路径/资源/节点/状态/提交时间）
+clu job list gzu --active     # 只看非终态
+clu job log gzu 12345         # 读台账作业的 stdout/stderr（--tail N）
+```
+
+提交行为：
+- 脚本与日志落在远端 `<家目录>/.clu/jobs/<连接>/<名称>-<时间戳>-<随机>.sh|-%j.out|-%j.err`
+- 资源参数以 `#SBATCH` 指令插在 shebang 之后；脚本中已声明的同类指令不被覆盖
+- 脚本内容、路径、资源、状态写入本地 `jobs` 台账；daemon 每 60s 核对状态
+  （squeue 实时，已结束的用 sacct 补终态），`job list` 看到的就是最近核对结果
+- 安全门同样作用于脚本内容（危险命令拒绝）
+
+**端口转发**
+
+```bash
+clu forward add gzu 10.0.0.5 8888 --local-port 18888
+clu forward list
+clu forward remove fwd-1
 ```
 
 ## 6. 接入 Claude Code（MCP）
@@ -89,7 +165,7 @@ claude mcp add --scope user clu -- /path/to/clu-mcp     # 源码安装用 .venv/
 claude mcp add clu -- clu-mcp
 ```
 
-接入后 15 个工具（带 ○ 的只读，可在 Claude Code 权限设置里配免确认）：
+接入后 16 个工具（带 ○ 的只读，可在 Claude Code 权限设置里配免确认）：
 
 | 工具 | 说明 |
 |---|---|
@@ -159,10 +235,49 @@ clu forward list && clu forward remove fwd-1
 |---|---|
 | `~/.config/clu/connections.toml` | 连接与 profile（可手改，保留注释） |
 | `~/.config/clu/known_hosts` | 主机密钥（accept-new） |
-| `~/.local/share/clu/ledger.sqlite3` | 执行留痕 |
+| `~/.local/share/clu/ledger.sqlite3` | SQLite：执行留痕 + 会话登记 + 作业台账 |
 | `$XDG_RUNTIME_DIR/clu/`（或 `/tmp/clu-$UID/`） | daemon socket 与日志 `daemon.log` |
 
 环境变量 `CLU_CONFIG_DIR` / `CLU_DATA_DIR` / `CLU_RUNTIME_DIR` 可重定位（测试用）。
+
+### 9.1 数据库表（`ledger.sqlite3`）
+
+**`exec_records`** —— 执行流水（`ledger_query` 检索）
+
+| 字段 | 说明 |
+|---|---|
+| `id` / `ts` | 自增主键 / UTC ISO8601 时间 |
+| `connection` | 连接 label |
+| `kind` | exec / submit / alloc / release / cancel / upload / download / forward |
+| `command` | 命令或脚本摘要 |
+| `exit_code` / `duration_ms` | 退出码 / 耗时 |
+| `job_id` | 关联的 slurm 作业（可空） |
+| `summary` | 一行摘要 |
+
+**`sessions`** —— 托管会话登记 `(label, purpose)` 主键
+
+| 字段 | 说明 |
+|---|---|
+| `label` / `purpose` | 连接 / 用途名（tmux 会话 `clu/<label>/<purpose>`） |
+| `job_id` / `node` / `partition` | 分配到的作业与节点、分区 |
+| `gpus` / `cpus` | 申请资源 |
+| `state` | pending / granted（连接不可达时列表标注 stale） |
+| `updated_ts` | 最近一次核对时间 |
+
+**`jobs`** —— 批处理作业台账 `(connection, job_id)` 主键
+
+| 字段 | 说明 |
+|---|---|
+| `name` | 作业名 |
+| `script_path` / `script` | 远端脚本绝对路径 / 完整脚本内容 |
+| `partition` / `requested_nodes` / `cpus` / `gpus` | 申请资源 |
+| `node_list` | 实际分配节点（squeue/sacct 核对） |
+| `stdout_path` / `stderr_path` | 日志绝对路径（`%j` 已解析为 job_id） |
+| `state` | PENDING/RUNNING/COMPLETED/FAILED/CANCELLED/TIMEOUT/... |
+| `exit_code` | sacct 退出码（如 `0:0`） |
+| `submitted_ts` / `updated_ts` | 提交 / 最近核对时间 |
+
+远端目录：`~/.clu/jobs/<连接>/`（脚本与日志）、`~/.clu/alloc/<连接>/<purpose>.log`（salloc 日志）。
 
 ## 10. 故障排查
 
