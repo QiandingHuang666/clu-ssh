@@ -7,7 +7,7 @@ import typer
 from rich.console import Console
 from rich.table import Table
 
-from clu import __version__
+from clu import AUTHOR_EMAIL, AUTHOR_NAME, __version__
 from clu.client import CluClient, CluError
 from clu.config.ssh_config import import_into_store
 from clu.config.store import ConfigError, ConfigStore
@@ -43,7 +43,8 @@ def main(
 ) -> None:
     """clu：连接池与集群操作的统一入口。"""
     if version:
-        typer.echo(__version__)
+        typer.echo(f"clu {__version__}")
+        typer.echo(f"{AUTHOR_NAME} <{AUTHOR_EMAIL}>")
         raise typer.Exit()
 
 

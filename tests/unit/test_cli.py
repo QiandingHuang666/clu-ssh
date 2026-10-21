@@ -30,6 +30,13 @@ def test_version_flag_prints_version() -> None:
     assert __version__ in result.output
 
 
+def test_version_prints_author_signature() -> None:
+    result = runner.invoke(app, ["--version"])
+    assert result.exit_code == 0
+    assert "Qianding Huang" in result.output
+    assert "qiandingh@foxmail.com" in result.output
+
+
 def test_server_subcommands_registered() -> None:
     result = runner.invoke(app, ["server", "--help"])
     assert result.exit_code == 0
