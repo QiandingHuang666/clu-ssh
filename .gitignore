@@ -20,3 +20,6 @@ build/
 
 # archify 工作区（回执与捕获，可由 candidate.json 再生）
 .archify/
+
+# 本地人工测试清单（不跟踪）
+docs/manual-test-checklist.md

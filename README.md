@@ -9,7 +9,6 @@ SSH 会话保持与管理 + Slurm 集群 / 普通服务器的 AI agent 能力层
 
 总体架构图（交互式，明暗主题）：[docs/architecture.html](docs/architecture.html)
 使用说明：[docs/usage.md](docs/usage.md)
-人工测试清单：[docs/manual-test-checklist.md](docs/manual-test-checklist.md)
 
 ## 安装（计划）
 
