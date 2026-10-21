@@ -51,11 +51,14 @@ async def kill_session(runner: Runner, name: str) -> bool:
 async def create_session(
     runner: Runner, name: str, command: str, log_file: str | None = None
 ) -> None:
-    """创建后台会话；log_file 提供时输出 tee 追加到日志。"""
-    inner = command
+    """创建后台会话，command 直接持有 tmux 的 pty（交互前提）。
+
+    日志用 tmux pipe-pane 捕获而非 tee 管道——管道会让 srun --pty
+    因 stdout 非 tty 而拒绝伪终端（贵大实测）。log_file 含需展开的 $HOME。
+    """
+    await runner(f"tmux new-session -d -s {shlex.quote(name)} {shlex.quote(command)}")
     if log_file is not None:
-        inner = f"({command}) 2>&1 | tee -a {log_file}"  # log_file 含需展开的 $HOME
-    await runner(f"tmux new-session -d -s {shlex.quote(name)} {shlex.quote(inner)}")
+        await runner(f"tmux pipe-pane -o -t {shlex.quote(name)} 'cat >> {log_file}'")
 
 
 async def list_sessions(runner: Runner, label: str) -> list[dict[str, object]]:

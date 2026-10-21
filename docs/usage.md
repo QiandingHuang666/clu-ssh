@@ -160,6 +160,7 @@ clu forward list && clu forward remove fwd-1
 | salloc 后 session 一直 pending | 正常排队；`clu session info` 随时看，超时会话保留 |
 | salloc 报 "--gres=gpu:N must be input" | 集群提交插件强制经典语法——clu 已内置 `--gres=gpu:N`（贵大实测） |
 | attach 后 hostname 是登录节点 | 已修复：clu 用 `srun bash` 落计算节点（无 SallocDefaultCommand 的集群 salloc 默认本地执行） |
+| attach 后无提示符/配置未生效 | 已修复：`srun --pty bash -l` 持真终端并走登录 shell；日志改用 tmux pipe-pane（tee 管道会让 srun 拒绝 --pty） |
 | 转发不工作 | 转发绑定在连接上，连接断开后需重新 `clu forward add`（最小集限制） |
 | squeue 输出解析异常 | 各校魔改 Slurm 差异大——把 `clu exec gzu "squeue -u you"` 原始输出发给作者 |
 | 空闲 GPU 数量可疑 | `resources` 的已占取节点 AllocTRES（`scontrol show nodes -o` 里 `gres/gpu=N` 为总量）。先用 `clu exec gzu "scontrol show node <节点名> -o"` 肉眼对账；老集群无 AllocTRES 时返回值会注明是作业估算 |

@@ -31,7 +31,7 @@ def test_build_salloc_gpus_and_cpus() -> None:
     cmd = alloc.build_salloc(purpose="train", partition="gpu", gpus=2, cpus=8, time_limit="4:00:00")
     assert "--gres=gpu:2" in cmd  # 内部方言转换
     assert "-c 8" in cmd
-    assert cmd.endswith("srun --unbuffered bash")
+    assert cmd.endswith("srun --unbuffered --pty bash -l")
 
 
 def test_describe_request_user_facing() -> None:

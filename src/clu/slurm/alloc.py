@@ -47,9 +47,10 @@ def build_salloc(
         parts += ["-c", str(int(cpus))]
     if time_limit:
         parts += ["-t", time_limit]
-    # srun bash：落到计算节点交互 shell（集群无 SallocDefaultCommand 时 salloc 默认
-    # 本地执行，实测贵大如此）；attach 即入计算节点，exit 即释放资源
-    parts += ["srun", "--unbuffered", "bash"]
+    # srun --pty bash -l：落到计算节点的交互登录 shell——
+    # --pty 让 bash 看到终端（有提示符、读 ~/.bashrc），-l 走登录流程（profile）；
+    # 集群无 SallocDefaultCommand 时 salloc 默认本地执行（实测贵大如此）
+    parts += ["srun", "--unbuffered", "--pty", "bash", "-l"]
     return " ".join(shlex.quote(p) for p in parts)
 
 
