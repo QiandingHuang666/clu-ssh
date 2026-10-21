@@ -84,3 +84,30 @@ def test_resources_cmd_renders(monkeypatch) -> None:
     result = runner.invoke(app, ["resources", "cl", "--nodes"])
     assert result.exit_code == 0
     assert "gpu" in result.output and "14/16" in result.output and "gpu01" in result.output
+
+
+def test_session_release_cli(monkeypatch) -> None:
+    import clu.cli as cli_mod
+
+    calls = []
+
+    def fake_do_request(method: str, params: dict) -> dict:
+        calls.append((method, params))
+        if method == "session.release":
+            assert params["purpose"] in ("train", "eval")
+            return {"released": True}
+        return {"sessions": [{"purpose": "train"}, {"purpose": "eval"}]}
+
+    monkeypatch.setattr(cli_mod, "_do_request", fake_do_request)
+    monkeypatch.setattr(cli_mod, "ensure_daemon", lambda: None)
+
+    result = runner.invoke(app, ["session", "release", "cl", "train"])
+    assert result.exit_code == 0
+    assert "已释放" in result.output
+
+    result = runner.invoke(app, ["session", "release", "cl", "--all"])
+    assert result.exit_code == 0
+    assert calls.count(("session.release", {"label": "cl", "purpose": "eval"})) == 1
+
+    result = runner.invoke(app, ["session", "release", "cl"])
+    assert result.exit_code == 1  # 缺 PURPOSE 且无 --all

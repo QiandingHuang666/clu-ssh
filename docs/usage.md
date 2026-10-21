@@ -69,6 +69,7 @@ clu alloc    LABEL [--gpu|--cpu] [--gpus N] [--cpus N] [-p 分区] [--purpose �
                                             抢占资源（默认 GPU 优先回退 CPU）
 clu exec     LABEL COMMAND... [--timeout]   远程执行（受安全门约束）
 clu session  list [LABEL]                 tmux 托管会话
+               release LABEL PURPOSE|--all    释放会话（资源归还集群）
 clu attach   LABEL PURPOSE                接入托管会话的 tmux（交互式）
 clu forward  add LABEL HOST PORT [--local-port N] | list | remove ID
 clu --version

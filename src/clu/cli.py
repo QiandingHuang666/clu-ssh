@@ -452,6 +452,49 @@ def alloc_cmd(
         console.print(f"[red]{result.get('error')}[/red]")
 
 
+@session_app.command("release")
+def session_release(
+    label: str,
+    purpose: str = typer.Argument(None, help="会话用途名；与 --all 二选一。"),
+    all_sessions: bool = typer.Option(False, "--all", help="释放该连接全部托管会话。"),
+) -> None:
+    """释放托管会话：杀 tmux -> salloc 退出 -> 资源归还集群。"""
+    if not purpose and not all_sessions:
+        _fail("给出 PURPOSE 或使用 --all")
+        return
+    if purpose and all_sessions:
+        _fail("PURPOSE 与 --all 二选一")
+        return
+    try:
+        ensure_daemon()
+        if all_sessions:
+            listed = _do_request("session.list", {"label": label})
+            raw = listed.get("sessions")
+            purposes = (
+                [str(dict(r).get("purpose")) for r in raw if isinstance(r, dict)]
+                if isinstance(raw, list)
+                else []
+            )
+            if not purposes:
+                console.print("该连接暂无托管会话")
+                return
+            for one in purposes:
+                result = _do_request("session.release", {"label": label, "purpose": one})
+                console.print(
+                    f"已释放 {one}"
+                    + ("" if result.get("released") else " [yellow]（不存在）[/yellow]")
+                )
+            return
+        result = _do_request("session.release", {"label": label, "purpose": purpose})
+    except CluError as exc:
+        _fail(f"释放失败：{exc.message}")
+        return
+    if result.get("released"):
+        console.print(f"[green]已释放[/green] {label}/{purpose}（资源已归还）")
+    else:
+        _fail(f"不存在：{label}/{purpose}")
+
+
 @app.command("attach")
 def attach(label: str, purpose: str) -> None:
     """接入托管会话的 tmux（交互式，经系统 ssh -t）。"""
