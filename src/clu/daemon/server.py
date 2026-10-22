@@ -250,8 +250,12 @@ def ensure_daemon(
             spawn_kwargs = {
                 "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
             }
+        if getattr(sys, "frozen", False):  # PyInstaller 单二进制
+            spawn_cmd = [sys.executable, "__daemon"]
+        else:
+            spawn_cmd = [sys.executable, "-m", "clu.daemon"]
         proc = subprocess.Popen(
-            [sys.executable, "-m", "clu.daemon"],
+            spawn_cmd,
             stdin=subprocess.DEVNULL,
             stdout=fh,
             stderr=fh,

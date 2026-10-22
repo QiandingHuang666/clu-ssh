@@ -6,13 +6,17 @@
 from __future__ import annotations
 
 import shlex
+import sys
 from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
 from clu.protocol import CluError
 
-ASSET_DIR = Path(__file__).parent / "ptyd"
+if getattr(sys, "frozen", False):  # PyInstaller：数据解包到 _MEIPASS/clu/ptyd
+    ASSET_DIR = Path(getattr(sys, "_MEIPASS", Path(__file__).parent)) / "clu" / "ptyd"
+else:
+    ASSET_DIR = Path(__file__).parent / "ptyd"
 ARCH_MAP = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 # clu-ptyd 独立版本（Go 改动时递增，触发远端重新部署；与 clu 的 __version__ 解耦）
 PTYD_VERSION = "4"

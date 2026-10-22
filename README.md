@@ -15,19 +15,41 @@
 
 ## 2. 安装
 
-```bash
-# 推荐：uv（https://docs.astral.sh/uv/）
-uv tool install clu-ssh          # 发布后可用
+### 方式一：单文件二进制（推荐，无需 Python）
 
-# 开发者：从源码
+```bash
+# macOS / Linux：下载对应平台二进制到 ~/.local/bin
+curl -fsSL https://raw.githubusercontent.com/QiandingHuang666/clu-ssh/main/packaging/install.sh | sh
+
+# 指定版本或目录：
+# CLU_VERSION=v0.1.6 CLU_PREFIX=/usr/local/bin sh packaging/install.sh
+```
+
+```powershell
+# Windows（PowerShell）
+irm https://raw.githubusercontent.com/QiandingHuang666/clu-ssh/main/packaging/install.ps1 | iex
+```
+
+Releases 页提供各平台产物：`clu-<版本>-<系统>-<架构>.tar.gz`（Windows 为 `.zip`）
+与同名 `.sha256` 校验文件。`clu-mcp` 与 `clu` 是同一个二进制（按 argv[0] 分派）。
+
+### 方式二：uv / pipx（需要 Python ≥ 3.11）
+
+```bash
+uv tool install clu-ssh
+# 或 pipx install clu-ssh
+```
+
+### 方式三：源码开发
+
+```bash
 git clone https://github.com/QiandingHuang666/clu-ssh
 cd clu-ssh && uv sync
 alias clu='uv run --project /path/to/clu-ssh clu'
 ```
 
-要求：macOS（Intel / Apple Silicon）/ Linux / Windows；Python ≥ 3.11；SSH **公钥认证**
-（不支持密码登录的连接）。Windows 上 `clu attach` 需要系统 OpenSSH 客户端。
-                                          detach：tmux 用 Ctrl-b d，pty-daemon 用 Ctrl-]；exit 结束会话
+要求：SSH **公钥认证**（不支持密码登录的连接）。Windows 上 `clu attach` 需要系统
+OpenSSH 客户端。
 
 ## 3. 五分钟上手
 

@@ -251,6 +251,16 @@ def connection_check(label: str) -> None:
     )
 
 
+@app.command("__daemon", hidden=True)
+def daemon_cmd() -> None:
+    """内部命令：以当前进程运行 daemon（冻结二进制下 ensure 拉起用）。"""
+    import asyncio
+
+    from clu.daemon.server import run_daemon
+
+    asyncio.run(run_daemon())
+
+
 @app.command("exec")
 def exec_command(
     label: str = typer.Argument(..., help="连接 label。"),

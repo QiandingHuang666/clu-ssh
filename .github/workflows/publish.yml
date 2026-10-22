@@ -63,3 +63,63 @@ jobs:
             gh release create "$TAG" dist/* --repo "$GITHUB_REPOSITORY" \
               --title "$TAG" --notes "$NOTES"
           fi
+
+  binaries:
+    needs: release
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-22.04
+            target: linux-x86_64
+          - os: ubuntu-24.04-arm
+            target: linux-arm64
+          - os: macos-13
+            target: darwin-x86_64
+          - os: macos-latest
+            target: darwin-arm64
+          - os: windows-latest
+            target: windows-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: astral-sh/setup-uv@v5
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - run: uv sync
+      - name: 构建 pty 守护（嵌入二进制）
+        shell: bash
+        run: ./daemon-pty/build.sh
+      - name: 构建 clu 单文件二进制
+        shell: bash
+        run: ./packaging/build_binary.sh dist
+      - name: 打包（Unix）
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          VER=${GITHUB_REF_NAME#v}
+          ASSET="clu-${VER}-${{ matrix.target }}.tar.gz"
+          cd dist
+          tar -czf "$ASSET" clu
+          if command -v sha256sum >/dev/null 2>&1; then
+            sha256sum "$ASSET" > "$ASSET.sha256"
+          else
+            shasum -a 256 "$ASSET" > "$ASSET.sha256"
+          fi
+      - name: 打包（Windows）
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $Ver = $env:GITHUB_REF_NAME.TrimStart("v")
+          $Asset = "clu-$Ver-${{ matrix.target }}.zip"
+          Compress-Archive -Path dist\clu.exe -DestinationPath "dist\$Asset"
+          $Hash = (Get-FileHash "dist\$Asset" -Algorithm SHA256).Hash.ToLower()
+          "$Hash  $Asset" | Out-File "dist\$Asset.sha256" -Encoding ascii
+      - name: 上传到 Release
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/*.sha256 \
+            --repo "$GITHUB_REPOSITORY" --clobber
