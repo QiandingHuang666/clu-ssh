@@ -19,7 +19,7 @@ case "$(uname -s)" in
     ;;
   MINGW*|MSYS*|CYGWIN*)
     EXTRA="--windows-console-mode=force --product-name=clu \
-      --product-version=${VER}.0 --file-version=${VER}.0 --company-name=Qianding Huang"
+      --product-version=${VER}.0 --file-version=${VER}.0 --company-name=QiandingHuang"
     ;;
 esac
 
