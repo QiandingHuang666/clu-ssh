@@ -65,7 +65,8 @@ def runtime_dir() -> Path:
         base = Path(os.environ.get("TEMP") or Path.home() / "AppData" / "Local" / "Temp")
         return _env_dir("CLU_RUNTIME_DIR", base / APP_NAME)
     xdg = os.environ.get("XDG_RUNTIME_DIR")
-    base = Path(xdg) if xdg else Path(f"/tmp/clu-{os.getuid()}")
+    uid = getattr(os, "getuid", lambda: 0)()  # typeshed: getuid 仅 POSIX
+    base = Path(xdg) if xdg else Path(f"/tmp/clu-{uid}")
     return _env_dir("CLU_RUNTIME_DIR", base / APP_NAME)
 
 

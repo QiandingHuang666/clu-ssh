@@ -31,10 +31,9 @@ def _port_file() -> Path:
 async def connect(timeout: float) -> tuple[asyncio.StreamReader, asyncio.StreamWriter]:
     """建立到 daemon 的连接；Windows 上完成 token 握手。"""
     if not IS_WINDOWS:
+        unix_connect = getattr(asyncio, "open_unix_connection")  # noqa: B009  typeshed: 仅 POSIX
         try:
-            return await asyncio.wait_for(
-                asyncio.open_unix_connection(str(C.daemon_socket())), timeout
-            )
+            return await asyncio.wait_for(unix_connect(str(C.daemon_socket())), timeout)
         except (TimeoutError, OSError) as exc:
             raise CluError("daemon_unreachable", f"无法连接 daemon：{exc}") from exc
     try:
@@ -60,7 +59,8 @@ async def serve(handle_client: Handler) -> tuple[asyncio.AbstractServer, str | N
         path.parent.mkdir(parents=True, exist_ok=True)
         if path.exists():
             path.unlink()  # 调用方保证无存活 daemon 后才拉起
-        server = await asyncio.start_unix_server(handle_client, path=str(path))
+        unix_serve = getattr(asyncio, "start_unix_server")  # noqa: B009  typeshed: 仅 POSIX
+        server = await unix_serve(handle_client, path=str(path))
         with contextlib.suppress(OSError, NotImplementedError):
             path.chmod(0o600)
         return server, None
