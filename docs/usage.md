@@ -300,6 +300,7 @@ clu forward list && clu forward remove fwd-1
 | `clu session list` 提示连接不可达 | 正常降级：该机器关机/网络不通，仅跳过其会话列举，其余照常（多连接并行探测，6s 上限） |
 | squeue 输出解析异常 | 各校魔改 Slurm 差异大——把 `clu exec gzu "squeue -u you"` 原始输出发给作者 |
 | 空闲 GPU 数量可疑 | `resources` 的已占取节点 AllocTRES（`scontrol show nodes -o` 里 `gres/gpu=N` 为总量）。先用 `clu exec gzu "scontrol show node <节点名> -o"` 肉眼对账；老集群无 AllocTRES 时返回值会注明是作业估算 |
+| agent 循环重试同一命令 | 熔断保护：相同命令 120s 内执行满 5 次返回 `loop_detected` 并提示模型直接汇总已有结果；不同命令不受影响 |
 
 ## 11. 已知边界（v1）
 
