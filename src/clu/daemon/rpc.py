@@ -21,7 +21,13 @@ from clu.ledger.db import Ledger
 from clu.ledger.query import LedgerFilter
 from clu.policy import check_exec, check_submit_script
 from clu.profiles import Profile
-from clu.protocol import ERR_INTERNAL, ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, ERR_NOT_FOUND
+from clu.protocol import (
+    ERR_INTERNAL,
+    ERR_INVALID_PARAMS,
+    ERR_LOOP_DETECTED,
+    ERR_METHOD_NOT_FOUND,
+    ERR_NOT_FOUND,
+)
 from clu.slurm.alloc import probe_session
 from clu.ssh.connection import CluConnectionError, ExecResult
 from clu.ssh.forward import ForwardError, ForwardManager
@@ -181,6 +187,13 @@ async def _exec(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
     )
     if not decision.allowed:
         raise RpcFailure("policy_denied", f"{decision.message}；建议：{decision.suggestion}")
+    recent = await ctx.ledger.count_recent_identical(label, command)
+    if recent >= 5:  # 循环熔断：相同命令 2 分钟内执行 5 次即拒绝（v0.2）
+        raise RpcFailure(
+            ERR_LOOP_DETECTED,
+            f"相同命令 120s 内已执行 {recent} 次，疑似 agent 循环。"
+            "请立即停止重试：此前每次调用的完整结果都在 tool_result 里，直接汇总回答即可。",
+        )
     result = await ctx.pool.run(label, command, timeout=timeout)
     await ctx.ledger.record(
         kind="exec",

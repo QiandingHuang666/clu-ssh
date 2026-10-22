@@ -125,3 +125,20 @@ async def test_session_list_registry_driven(tmp_path: Path) -> None:
     assert report["removed"] == 1  # good/gone 的 tmux 不在 -> 销账
     remaining = {f"{r['label']}/{r['purpose']}" for r in await ledger.list_sessions()}
     assert remaining == {"good/train", "dead/old"}
+
+
+async def test_exec_loop_breaker(tmp_path: Path) -> None:
+    """相同命令 2 分钟内执行满 5 次 → loop_detected，不同的命令不受影响。"""
+    from clu.daemon.rpc import dispatcher
+
+    ctx = await make_ctx(tmp_path)
+    for _ in range(5):
+        await dispatcher.dispatch(ctx, "exec", {"label": "gzu", "command": "systemctl list-units"})
+    with pytest.raises(RpcFailure) as loop:
+        await dispatcher.dispatch(ctx, "exec", {"label": "gzu", "command": "systemctl list-units"})
+    assert loop.value.code == "loop_detected"
+    assert "停止重试" in loop.value.message
+    result = await dispatcher.dispatch(
+        ctx, "exec", {"label": "gzu", "command": "systemctl list-units --no-pager"}
+    )
+    assert result["exit_code"] == 0  # 不同命令不受熔断影响

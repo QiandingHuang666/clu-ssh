@@ -269,6 +269,22 @@ class Ledger:
         ]
         return [dict(zip(keys, r, strict=True)) for r in rows]
 
+    async def count_recent_identical(
+        self, connection: str, command: str, *, seconds: int = 120
+    ) -> int:
+        """同一连接同一命令在窗口内的执行次数（agent 循环熔断用）。"""
+        if self._db is None:
+            return 0
+        from datetime import UTC, datetime, timedelta
+
+        since = (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat(timespec="seconds")
+        cursor = await self._db.execute(
+            "SELECT COUNT(*) FROM exec_records WHERE connection = ? AND command = ? AND ts >= ?",
+            (connection, command, since),
+        )
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
+
     async def record(
         self,
         *,

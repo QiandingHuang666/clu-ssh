@@ -19,13 +19,14 @@ class CluError(Exception):
         self.retry_after = retry_after
 
 
-# 错误码（M1 子集，M2 增加 policy_denied）
+# 错误码（M1 子集；M2 增加 policy_denied，v0.2 增加 loop_detected）
 ERR_METHOD_NOT_FOUND = "method_not_found"
 ERR_INVALID_PARAMS = "invalid_params"
 ERR_NOT_FOUND = "not_found"
 ERR_CONNECTION_FAILED = "connection_failed"
 ERR_UNAVAILABLE = "unavailable"
 ERR_INTERNAL = "internal"
+ERR_LOOP_DETECTED = "loop_detected"
 
 
 class RpcRequest(BaseModel):
