@@ -22,3 +22,18 @@ jobs:
       - run: uv run ruff check .
       - run: uv run mypy
       - run: uv run pytest
+
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: vet + test
+        working-directory: daemon-pty
+        run: |
+          go vet ./...
+          go test -count=1 ./...
+      - name: 交叉编译冒烟
+        run: ./daemon-pty/build.sh

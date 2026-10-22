@@ -35,6 +35,11 @@ jobs:
             echo "clu-ssh ${VERSION} 已在 PyPI（可能被 yank），跳过发布"
             echo "skip_publish=true" >> "$GITHUB_ENV"
           fi
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22"
+      - name: 构建 pty 守护（linux amd64/arm64，嵌入 wheel）
+        run: ./daemon-pty/build.sh
       - run: uv build  # 无论是否发布 PyPI 都构建，作为 Release 资产
       - name: 发布至 PyPI
         if: env.skip_publish != 'true'
