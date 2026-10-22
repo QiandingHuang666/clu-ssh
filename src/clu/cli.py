@@ -291,6 +291,49 @@ def _do_request(method: str, params: dict[str, object]) -> dict[str, object]:
     return result
 
 
+@session_app.command("start")
+def session_start(
+    label: str,
+    purpose: str,
+    backend: str = typer.Option(
+        None,
+        "--backend",
+        help="tmux | pty-daemon | setsid；缺省自动（tmux → pty-daemon → setsid）。",
+    ),
+    command: str = typer.Option(
+        None, "--command", "-c", help="setsid 后端必填的后台命令；其他后端忽略。"
+    ),
+) -> None:
+    """在任意连接（集群/服务器）上开一个保活托管会话。
+
+    后端自动选择：远端有 tmux → 交互会话（clu attach 可回）；
+    无 tmux → 部署 pty-daemon 静态守护（可 attach，零远端依赖）；
+    部署不可行且给了 --command → setsid 后台保活（不可 attach，仅日志）。
+    """
+    try:
+        ensure_daemon()
+        result = _do_request(
+            "session.start",
+            {"label": label, "purpose": purpose, "backend": backend, "command": command},
+        )
+    except CluError as exc:
+        _fail(f"会话启动失败：{exc.message}")
+        return
+    if result.get("state") == "failed":
+        _fail(f"会话启动失败：{result.get('error')}")
+        return
+    backend_used = str(result.get("backend"))
+    console.print(f"[green]会话已启动[/green] {label}/{purpose}（backend={backend_used}）")
+    if backend_used == "tmux":
+        console.print(f"接入：[bold]clu attach {label} {purpose}[/bold]（exit 即释放）")
+    elif backend_used == "pty-daemon":
+        console.print("接入：让 Claude Code 调 session_info 后 attach，或直接 ssh 上去用 clu-ptyd")
+    else:
+        console.print(
+            f"后台保活（不可交互）；查看日志：session_info（或远端 ~/.clu/sessions/{purpose}.log）"
+        )
+
+
 @session_app.command("list")
 def session_list(
     label: str = typer.Argument(None, help="连接 label；缺省按登记表检查全部会话。"),
@@ -298,7 +341,7 @@ def session_list(
         False, "--deep", help="全量扫描所有连接的 tmux（收编登记表外的会话）。"
     ),
 ) -> None:
-    """列出 tmux 托管会话（登记表驱动，含存活校验与自动销账）。"""
+    """列出托管会话（tmux / pty-daemon / setsid，登记表驱动，含存活校验与自动销账）。"""
     try:
         ensure_daemon()
         result = _do_request("session.list", {"label": label, "deep": deep})
@@ -477,7 +520,7 @@ def session_release(
     purpose: str = typer.Argument(None, help="会话用途名；与 --all 二选一。"),
     all_sessions: bool = typer.Option(False, "--all", help="释放该连接全部托管会话。"),
 ) -> None:
-    """释放托管会话：杀 tmux -> salloc 退出 -> 资源归还集群。"""
+    """释放托管会话（按后端：tmux 杀会话 / pty-daemon 与 setsid 杀进程）。"""
     if not purpose and not all_sessions:
         _fail("给出 PURPOSE 或使用 --all")
         return

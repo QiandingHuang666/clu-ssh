@@ -523,21 +523,37 @@ async def check_registered_sessions(ctx: "DaemonContext") -> dict[str, int]:
             await ctx.ledger.delete_session(label, purpose)
             removed.append(f"{label}/{purpose}")
             continue
+        backend = str(row.get("backend") or "tmux")
         try:
-            info = await asyncio.wait_for(
-                probe_session(_runner(ctx, label), label, purpose), timeout=6.0
-            )
+            if backend == "pty-daemon":
+                from clu.session_backend import info_ptyd
+
+                ptyd_bin = await _remote_ptyd_bin(_runner(ctx, label))
+                info = await asyncio.wait_for(
+                    info_ptyd(_runner(ctx, label), ptyd_bin, purpose), timeout=6.0
+                )
+            elif backend == "setsid":
+                from clu.session_backend import info_setsid
+
+                info = await asyncio.wait_for(
+                    info_setsid(_runner(ctx, label), int(str(row.get("pid") or 0)), None),
+                    timeout=6.0,
+                )
+            else:
+                info = await asyncio.wait_for(
+                    probe_session(_runner(ctx, label), label, purpose), timeout=6.0
+                )
         except Exception:
             kept += 1
             continue
         state = str(info.get("state"))
-        if state == "failed":
+        if state in ("failed", "exited", "unknown"):
             await ctx.ledger.delete_session(label, purpose)
             await ctx.ledger.record(
                 kind="release",
                 connection=label,
                 command=f"watchdog {purpose}",
-                summary=f"会话消亡自动销账：{purpose}",
+                summary=f"会话消亡自动销账：{purpose}（{backend}）",
             )
             removed.append(f"{label}/{purpose}")
         else:
@@ -545,6 +561,7 @@ async def check_registered_sessions(ctx: "DaemonContext") -> dict[str, int]:
                 label=label,
                 purpose=purpose,
                 state=state,
+                backend=backend,
                 job_id=info.get("job_id"),
                 node=info.get("node"),
             )
@@ -621,7 +638,7 @@ async def _session_start(ctx: DaemonContext, params: dict[str, Any]) -> dict[str
         label=label,
         purpose=purpose,
         backend=backend,
-        pid=info.get("pid"),
+        pid=int(info["pid"]) if info.get("pid") is not None else None,
         state=str(info.get("state") or "running"),
     )
     await ctx.ledger.record(
@@ -659,14 +676,22 @@ async def _session_info(ctx: DaemonContext, params: dict[str, Any]) -> dict[str,
         from clu.session_backend import info_setsid
 
         info = await info_setsid(runner, int(str(row.get("pid") or 0)), None)
-        await ctx.ledger.upsert_session(label=label, purpose=purpose, state=str(info.get("state")))
+        await ctx.ledger.upsert_session(
+            label=label,
+            purpose=purpose,
+            state=str(info.get("state")),
+            backend="setsid",
+            pid=int(str(row.get("pid") or 0)),
+        )
         return dict(row, **info)
     if backend == "pty-daemon":
         from clu.session_backend import info_ptyd
 
         ptyd_bin = await _remote_ptyd_bin(runner)
         info = await info_ptyd(runner, ptyd_bin, purpose)
-        await ctx.ledger.upsert_session(label=label, purpose=purpose, state=str(info.get("state")))
+        await ctx.ledger.upsert_session(
+            label=label, purpose=purpose, state=str(info.get("state")), backend="pty-daemon"
+        )
         return dict(row or {}, backend=backend, purpose=purpose, **info)
 
     info = await allocops.session_info(runner, label, purpose)
@@ -677,6 +702,7 @@ async def _session_info(ctx: DaemonContext, params: dict[str, Any]) -> dict[str,
             job_id=info.get("job_id"),
             node=info.get("node"),
             state="granted",
+            backend="tmux",
         )
     return info
 

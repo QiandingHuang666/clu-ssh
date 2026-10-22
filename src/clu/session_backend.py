@@ -35,19 +35,14 @@ async def start(
     if backend == "pty-daemon":
         if not ptyd_bin:
             raise ValueError("pty-daemon 后端需要 ptyd_bin")
+        # clu-ptyd 控制面应答为纯文本 "ok"（非 JSON）
         r = await runner(f"{ptyd_bin} create -name {shlex.quote(purpose)}")
-        try:
-            import json
-
-            resp = json.loads(r.stdout.strip() or "{}")
-        except ValueError:
-            resp = {}
-        if r.exit_code != 0 or not resp.get("ok"):
+        if r.exit_code != 0 or r.stdout.strip() != "ok":
             return {
                 "backend": "pty-daemon",
                 "session": name,
                 "state": "failed",
-                "error": f"ptyd create 失败：{r.stderr.strip() or r.stdout.strip()[:200]}",
+                "error": f"ptyd create 失败：{(r.stderr or r.stdout).strip()[:200]}",
             }
         return {"backend": "pty-daemon", "session": name, "state": "running"}
     if backend == "tmux":

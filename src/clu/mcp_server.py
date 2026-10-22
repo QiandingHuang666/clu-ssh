@@ -213,6 +213,32 @@ async def slurm_alloc(
     )
 
 
+@server.tool(name="session_start", annotations=_WRITE)
+async def session_start(
+    connection: str,
+    purpose: str,
+    backend: str | None = None,
+    command: str | None = None,
+) -> dict[str, Any]:
+    """在任意连接（集群/服务器）上开一个保活托管会话。
+
+    后端自动选择：远端有 tmux → 交互会话（attach 可回）；无 tmux →
+    部署 pty-daemon 静态守护（可 attach，远端零依赖）；部署不可行且给了
+    command → setsid 后台保活（不可 attach，仅日志）。普通查询任务不要用
+    本工具，直接用 exec。
+
+    Args:
+        connection: 连接 label
+        purpose: 会话用途名（唯一标识，重复会报 exists 或复用）
+        backend: 显式指定 tmux | pty-daemon | setsid（缺省自动）
+        command: setsid 后端必填的后台命令
+    """
+    return await _call(
+        "session.start",
+        {"label": connection, "purpose": purpose, "backend": backend, "command": command},
+    )
+
+
 @server.tool(name="session_list", annotations=_READONLY)
 async def session_list(connection: str | None = None) -> dict[str, Any]:
     """列出 tmux 托管会话（仅 alloc 抢占产生的资源会话；普通查询任务请用 exec）。

@@ -38,6 +38,8 @@ async def ensure_binary(runner: Runner, sftp_put: SftpPut, *, timeout: float = 3
     local = ASSET_DIR / f"clu-ptyd-linux-{goarch}.gz"
     if not local.exists():
         raise CluError("not_found", f"ptyd 资产缺失：{local.name}（发布包应内含）")
+    # 先建目录再上传（SFTP put 不会自动创建父目录）
+    await runner(f"mkdir -p $(dirname {shlex.quote(bin_path)})")
     await sftp_put(local, f"{bin_path}.gz")
     r = await runner(
         f"mkdir -p $(dirname {shlex.quote(bin_path)})"
