@@ -8,6 +8,17 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, TypeAdapter
 
+
+class CluError(Exception):
+    """daemon 返回的结构化错误，或本地通信失败。"""
+
+    def __init__(self, code: str, message: str, retry_after: float | None = None) -> None:
+        super().__init__(message)
+        self.code = code
+        self.message = message
+        self.retry_after = retry_after
+
+
 # 错误码（M1 子集，M2 增加 policy_denied）
 ERR_METHOD_NOT_FOUND = "method_not_found"
 ERR_INVALID_PARAMS = "invalid_params"

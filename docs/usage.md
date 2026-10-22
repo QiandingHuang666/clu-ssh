@@ -25,7 +25,8 @@ cd clu-ssh && uv sync
 alias clu='uv run --project /path/to/clu-ssh clu'
 ```
 
-要求：macOS 或 Linux；Python ≥ 3.11；SSH **公钥认证**（不支持密码登录的连接）。
+要求：macOS（Intel / Apple Silicon）/ Linux / Windows；Python ≥ 3.11；SSH **公钥认证**
+（不支持密码登录的连接）。Windows 上 `clu attach` 需要系统 OpenSSH 客户端。
 
 ## 3. 五分钟上手
 
@@ -239,7 +240,9 @@ clu forward list && clu forward remove fwd-1
 | `~/.config/clu/connections.toml` | 连接与 profile（可手改，保留注释） |
 | `~/.config/clu/known_hosts` | 主机密钥（accept-new） |
 | `~/.local/share/clu/ledger.sqlite3` | SQLite：执行留痕 + 会话登记 + 作业台账 |
-| `$XDG_RUNTIME_DIR/clu/`（或 `/tmp/clu-$UID/`） | daemon socket 与日志 `daemon.log` |
+| `$XDG_RUNTIME_DIR/clu/`（或 `/tmp/clu-$UID/`） | daemon socket 与日志 `daemon.log`（POSIX） |
+| `%APPDATA%\clu` / `%LOCALAPPDATA%\clu` / `%TEMP%\clu` | Windows 的配置 / 数据 / 运行时目录 |
+| Windows 传输 | daemon 监听 127.0.0.1 随机端口，`daemon.port` 存端口与一次性 token（首行握手） |
 
 环境变量 `CLU_CONFIG_DIR` / `CLU_DATA_DIR` / `CLU_RUNTIME_DIR` 可重定位（测试用）。
 
@@ -303,5 +306,5 @@ clu forward list && clu forward remove fwd-1
 - 文件传输为 SFTP 单文件；目录增量同步（rsync）在 v1.1
 - 跳板仅单级（ProxyJump 一跳）；多级链在路线图
 - 转发仅本地 `-L`；SOCKS/远程 `-R` 在路线图
-- 平台 macOS + Linux；Windows 在路线图
+- 平台 macOS + Linux + Windows（Windows 传输为 127.0.0.1 TCP + 一次性 token，见 §9 运行时目录的 `daemon.port`）
 - 密码认证的连接不支持（先 `ssh-copy-id` 配好公钥）

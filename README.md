@@ -26,8 +26,8 @@ SSH 会话保持与管理 + Slurm 集群 / 普通服务器的 AI agent 能力层
 uv tool install clu-ssh      # 或 pipx install clu-ssh
 ```
 
-要求：Python ≥ 3.11；macOS 或 Linux。发布的是纯 Python wheel（`py3-none-any`），
-不依赖本机编译工具链。
+要求：Python ≥ 3.11；macOS（Intel / Apple Silicon）、Linux、Windows。发布的是纯
+Python wheel（`py3-none-any`），不依赖本机编译工具链；`clu attach` 需要 OpenSSH 客户端。
 
 ## 接入 Claude Code（MCP）
 
@@ -63,7 +63,8 @@ uv run ruff check .            # 静态检查
 uv run mypy                    # 类型检查（strict）
 ```
 
-CI（GitHub Actions）在 macOS 与 Linux 矩阵上运行同一套检查；tag 推送触发 PyPI 发布。
+CI（GitHub Actions）在 macOS、Linux、Windows 矩阵上运行同一套检查（集成测试在无
+Docker 的平台自动跳过）；tag 推送触发 PyPI 发布与 GitHub Release。
 
 ## License
 

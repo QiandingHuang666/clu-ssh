@@ -68,6 +68,11 @@
 
 MCP stdio 进程随时会被 Claude Code 杀掉，因此一切状态必须归 daemon。
 
+**传输层**（v0.2.0 起跨平台）：POSIX 用 unix socket（`daemon.sock`，0600）；
+Windows 的 asyncio 不支持 unix socket，改用 127.0.0.1 回环 TCP + 一次性 token
+（daemon 启动时写 `daemon.port`（含端口与随机 token），客户端首行握手验证）。
+两种传输共用同一 NDJSON 协议，客户端无感知。
+
 ## 4. 连接与配置管理
 
 `~/.config/clu/connections.toml`（tomlkit 读写，保留用户注释）：
@@ -299,5 +304,6 @@ Code 侧配置免确认白名单。
 | 2026-10-19 | 集成测试用容器，不用进程内假服务器/物理机 | 环境更真实；贡献者无真集群也能跑 |
 | 2026-10-20 | alloc 升级为专门抢占接口：默认 GPU 优先回退 CPU、resource/gpus/cpus/partition 可指定；用户侧命令形式保持 --gpus 简洁语法，集群方言由 clu 内部转换 | 用户裁决；贵大真机实测（--gres 插件强制、忙分区竞态需故障转移） |
 | 2026-10-21 | 会话管理引入 SQLite 登记表：远端 tmux 仍是存活真相，本地登记支撑 daemon 重启零探测恢复与不可达降级 | 用户裁决：需支持本地重启而远端资源仍持有的重建 |
+| 2026-10-22 | Windows 兼容：传输层抽象（POSIX unix socket / Windows 回环 TCP+token）、平台目录（APPDATA/LOCALAPPDATA）、信号与子进程分支、CI 增加 windows 矩阵（单元层） | 用户裁决：进入 Windows 兼容 |
 | 2026-10-21 | sbatch 作业引入 jobs 台账：脚本与 stdio 路径统一在 `~/.clu/jobs/<conn>/`，daemon 定期核对状态；submit 支持分区/节点/CPU/GPU/时限参数 | 用户裁决：作业提交需可追踪、可查询、日志集中 |
 | 2026-10-19 | 包名 clu-ssh（clu 被占用） | PyPI 已核查 |

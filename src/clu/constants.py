@@ -5,7 +5,10 @@
 """
 
 import os
+import sys
 from pathlib import Path
+
+IS_WINDOWS = sys.platform == "win32"  # 单点开关（测试可 monkeypatch）
 
 APP_NAME = "clu"
 
@@ -37,24 +40,38 @@ def _env_dir(env: str, default: Path) -> Path:
 
 
 def config_dir() -> Path:
-    """配置目录：~/.config/clu/（遵循 XDG_CONFIG_HOME）。"""
+    """配置目录：POSIX ~/.config/clu/（XDG）；Windows %APPDATA%\\clu/。"""
+    if IS_WINDOWS:
+        base = Path(os.environ.get("APPDATA") or Path.home() / "AppData" / "Roaming")
+        return _env_dir("CLU_CONFIG_DIR", base / APP_NAME)
     xdg = os.environ.get("XDG_CONFIG_HOME")
     base = Path(xdg) if xdg else Path.home() / ".config"
     return _env_dir("CLU_CONFIG_DIR", base / APP_NAME)
 
 
 def data_dir() -> Path:
-    """数据目录：~/.local/share/clu/（留痕 SQLite）。"""
+    """数据目录：POSIX ~/.local/share/clu/；Windows %LOCALAPPDATA%\\clu/。"""
+    if IS_WINDOWS:
+        base = Path(os.environ.get("LOCALAPPDATA") or Path.home() / "AppData" / "Local")
+        return _env_dir("CLU_DATA_DIR", base / APP_NAME)
     xdg = os.environ.get("XDG_DATA_HOME")
     base = Path(xdg) if xdg else Path.home() / ".local" / "share"
     return _env_dir("CLU_DATA_DIR", base / APP_NAME)
 
 
 def runtime_dir() -> Path:
-    """运行时目录：unix socket 与 daemon 日志所在。"""
+    """运行时目录：POSIX $XDG_RUNTIME_DIR 或 /tmp/clu-$UID；Windows %TEMP%\\clu/。"""
+    if IS_WINDOWS:
+        base = Path(os.environ.get("TEMP") or Path.home() / "AppData" / "Local" / "Temp")
+        return _env_dir("CLU_RUNTIME_DIR", base / APP_NAME)
     xdg = os.environ.get("XDG_RUNTIME_DIR")
     base = Path(xdg) if xdg else Path(f"/tmp/clu-{os.getuid()}")
     return _env_dir("CLU_RUNTIME_DIR", base / APP_NAME)
+
+
+def daemon_port_file() -> Path:
+    """Windows 传输：daemon.port（端口 + token，JSON）。"""
+    return runtime_dir() / "daemon.port"
 
 
 def connections_path() -> Path:

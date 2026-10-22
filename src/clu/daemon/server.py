@@ -3,14 +3,17 @@
 import asyncio
 import concurrent.futures
 import contextlib
+import json
 import logging
 import os
 import signal
+import sys
 import time
 from pathlib import Path
 from typing import Any
 
 import clu.constants as C
+from clu import transport
 from clu.client import CluError
 from clu.config.store import ConfigStore
 from clu.daemon.rpc import DaemonContext, Dispatcher, RpcFailure
@@ -36,12 +39,25 @@ async def _respond(writer: asyncio.StreamWriter, resp: RpcOk | RpcErr) -> None:
 
 
 async def handle_client(
-    ctx: DaemonContext, disp: Dispatcher, reader: asyncio.StreamReader, writer: asyncio.StreamWriter
+    ctx: DaemonContext,
+    disp: Dispatcher,
+    reader: asyncio.StreamReader,
+    writer: asyncio.StreamWriter,
+    auth_token: str | None = None,
 ) -> None:
     """单个客户端会话：逐行处理请求直到 EOF。"""
     peer = writer.get_extra_info("peername")
     log.debug("客户端接入：%s", peer)
     try:
+        if auth_token is not None:
+            auth_line = await reader.readline()
+            ok = False
+            with contextlib.suppress(ValueError):
+                ok = json.loads(auth_line).get("token") == auth_token
+            if not ok:
+                log.warning("客户端认证失败：%s", peer)
+                writer.close()
+                return
         while True:
             line = await reader.readline()
             if not line:
@@ -86,12 +102,6 @@ async def handle_client(
         with contextlib.suppress(OSError):
             await writer.wait_closed()
         log.debug("客户端断开：%s", peer)
-
-
-def _prepare_socket(path: Path) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    if path.exists():
-        path.unlink()  # 调用方（lifecycle.ensure）保证无存活 daemon 后才拉起
 
 
 async def _session_watch(ctx: "DaemonContext") -> None:
@@ -169,16 +179,17 @@ async def run_daemon(
     ctx = DaemonContext(store=store, pool=pool, ledger=ledger, socket_path=socket)
     ctx.forwards.bind(pool.acquire)
     disp = dispatcher or default_dispatcher
-    _prepare_socket(socket)
-    server = await asyncio.start_unix_server(
-        lambda r, w: asyncio.create_task(handle_client(ctx, disp, r, w)), path=str(socket)
-    )
-    socket.chmod(0o600)
+
+    async def _client(r: asyncio.StreamReader, w: asyncio.StreamWriter) -> None:
+        await handle_client(ctx, disp, r, w, auth_token=auth_token)
+
+    server, auth_token = await transport.serve(_client)
     log.info("daemon 就绪 pid=%s socket=%s", os.getpid(), socket)
 
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, ctx.shutdown.set)
+        with contextlib.suppress(NotImplementedError):  # Windows Proactor 无信号处理
+            loop.add_signal_handler(sig, ctx.shutdown.set)
     watcher = asyncio.create_task(_session_watch(ctx))
     try:
         await ctx.shutdown.wait()
@@ -190,8 +201,7 @@ async def run_daemon(
         ctx.forwards.close_all()
         await pool.close()
         await ledger.close()
-        if socket.exists():
-            socket.unlink()
+        transport.cleanup()
 
 
 def daemon_alive(socket_path: Path | None = None, timeout: float = 1.5) -> bool:
@@ -224,24 +234,29 @@ def ensure_daemon(
 ) -> dict[str, Any]:
     """不在运行则拉起（detached 子进程），等待就绪。"""
     import subprocess
-    import sys
     import time
 
     path = socket_path or C.daemon_socket()
     if daemon_alive(path):
         return {"started": False, "alive": True, "socket": str(path)}
-    if path.exists():
+    if not transport.IS_WINDOWS and path.exists():
         path.unlink()
     log_file = C.daemon_log()
     log_file.parent.mkdir(parents=True, exist_ok=True)
     with log_file.open("ab") as fh:
+        # 跨平台分离式启动：POSIX setsid / Windows DETACHED_PROCESS
+        spawn_kwargs: dict[str, Any] = {"start_new_session": True}
+        if sys.platform == "win32":
+            spawn_kwargs = {
+                "creationflags": subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.DETACHED_PROCESS
+            }
         proc = subprocess.Popen(
             [sys.executable, "-m", "clu.daemon"],
             stdin=subprocess.DEVNULL,
             stdout=fh,
             stderr=fh,
-            start_new_session=True,
             close_fds=True,
+            **spawn_kwargs,
         )
     deadline = time.monotonic() + wait_timeout
     while time.monotonic() < deadline:

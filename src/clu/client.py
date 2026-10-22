@@ -8,17 +8,10 @@ from pathlib import Path
 from typing import Any
 
 import clu.constants as C
-from clu.protocol import RpcErr, RpcRequest, decode_response, encode_line
+from clu import transport
+from clu.protocol import CluError, RpcErr, RpcRequest, decode_response, encode_line
 
-
-class CluError(Exception):
-    """daemon 返回的结构化错误，或本地通信失败。"""
-
-    def __init__(self, code: str, message: str, retry_after: float | None = None) -> None:
-        super().__init__(message)
-        self.code = code
-        self.message = message
-        self.retry_after = retry_after
+__all__ = ["CluClient", "CluError"]
 
 
 class CluClient:
@@ -53,8 +46,10 @@ class CluClient:
             return
         try:
             self._reader, self._writer = await asyncio.wait_for(
-                asyncio.open_unix_connection(str(self._socket_path)), self._timeout
+                transport.connect(self._timeout), self._timeout
             )
+        except CluError:
+            raise
         except (TimeoutError, OSError) as exc:
             raise CluError("daemon_unreachable", f"无法连接 daemon：{exc}") from exc
         if retry is False:

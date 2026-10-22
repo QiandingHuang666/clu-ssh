@@ -1,6 +1,8 @@
 """clu 命令行入口：daemon 的薄客户端；连接配置管理为本地文件操作。"""
 
 import asyncio
+import subprocess
+import sys
 from pathlib import Path
 
 import typer
@@ -715,6 +717,9 @@ def attach(label: str, purpose: str) -> None:
     target = f"{cfg.user}@{cfg.host}"
     args += [target, "tmux attach -t " + session_name(label, purpose)]
     console.print(f"[dim]{' '.join(args[: len(args) - 1])} tmux attach ...[/dim]")
+    if sys.platform == "win32":
+        # Windows 无 execvp 语义：前台运行 ssh，退出码透传
+        raise typer.Exit(subprocess.run(args, check=False).returncode)
     os.execvp("ssh", args)
 
 

@@ -6,6 +6,7 @@
 import shutil
 import socket
 import subprocess
+import sys
 import time
 import uuid
 from collections.abc import Callable
@@ -19,6 +20,8 @@ POLL_TIMEOUT = 20.0
 
 
 def _docker_available() -> bool:
+    if sys.platform == "win32":  # windows runner 的 docker 仅 Linux 容器，sshd 镜像跑不了
+        return False
     if shutil.which("docker") is None:
         return False
     try:
