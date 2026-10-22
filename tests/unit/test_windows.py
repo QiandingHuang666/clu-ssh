@@ -53,6 +53,7 @@ async def test_windows_connect_bad_port_file(win_mode: Path) -> None:
     assert exc.value.code == "daemon_unreachable"
 
 
+@pytest.mark.skipif(C.IS_WINDOWS, reason="POSIX 目录分支在 Windows 上不存在")
 def test_posix_dirs_unchanged(monkeypatch, tmp_path: Path) -> None:
     """POSIX 分支不受 Windows 开关影响。"""
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)

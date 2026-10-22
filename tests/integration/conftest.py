@@ -129,7 +129,7 @@ def _run_container(name: str, image: str, pubkey: str, extra: list[str]) -> None
 def sshd(sshd_image: str, ssh_key: Path) -> dict[str, object]:
     """单台 sshd 服务器（随机映射到 127.0.0.1）。"""
     name = f"clu-it-sshd-{uuid.uuid4().hex[:8]}"
-    pubkey = (ssh_key.with_suffix(".pub")).read_text().strip()
+    pubkey = (ssh_key.with_suffix(".pub")).read_text(encoding="utf-8").strip()
     _run_container(name, sshd_image, pubkey, ["-p", "127.0.0.1::22"])
     port = _host_port(name)
     _wait_port(port)
@@ -143,7 +143,7 @@ def jump_net(sshd_image: str, ssh_key: Path) -> dict[str, object]:
     net = f"clu-it-net-{uuid.uuid4().hex[:8]}"
     target = f"clu-it-target-{uuid.uuid4().hex[:8]}"
     jump = f"clu-it-jump-{uuid.uuid4().hex[:8]}"
-    pubkey = (ssh_key.with_suffix(".pub")).read_text().strip()
+    pubkey = (ssh_key.with_suffix(".pub")).read_text(encoding="utf-8").strip()
     try:
         subprocess.run(["docker", "network", "create", net], check=True, capture_output=True)
         _run_container(target, sshd_image, pubkey, ["--network", net])

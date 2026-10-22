@@ -50,7 +50,7 @@ async def test_known_hosts_recorded_then_tamper_rejected(sshd: dict, tmp_path) -
     pool = make_pool({"t": cfg}, tmp_path)
     try:
         await pool.run("t", "true")
-        assert "ssh-" in kh_path.read_text()
+        assert "ssh-" in kh_path.read_text(encoding="utf-8")
     finally:
         await pool.close()
     # 篡改 key 后必须拒绝（accept-new 语义的 strict 分支）

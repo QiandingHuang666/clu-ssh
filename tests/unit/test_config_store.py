@@ -34,7 +34,7 @@ def test_comments_preserved_on_edit(tmp_path: object) -> None:
     )
     store = ConfigStore(path)  # type: ignore[arg-type]
     store.add_connection(make_cfg("new"))
-    content = path.read_text()  # type: ignore[arg-type]
+    content = path.read_text(encoding="utf-8")  # type: ignore[arg-type]
     assert "# 我的连接" in content
     assert "[connections.new]" in content
 

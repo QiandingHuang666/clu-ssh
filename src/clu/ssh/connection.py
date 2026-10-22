@@ -172,7 +172,11 @@ class KnownHosts:
     def _entries(self) -> list[list[str]]:
         if self._path is None or not self._path.exists():
             return []
-        return [line.split() for line in self._path.read_text().splitlines() if line.strip()]
+        return [
+            line.split()
+            for line in self._path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        ]
 
     def has(self, host: str) -> bool:
         return any(entry and entry[0] == host for entry in self._entries())
