@@ -26,3 +26,6 @@ docs/manual-test-checklist.md
 
 # Go 构建产物
 daemon-pty/daemon-pty
+*.build/
+*.dist/
+nuitka-crash-report.xml
