@@ -23,3 +23,6 @@ build/
 
 # 本地人工测试清单（不跟踪）
 docs/manual-test-checklist.md
+
+# Go 构建产物
+daemon-pty/daemon-pty

@@ -53,6 +53,8 @@ CREATE TABLE IF NOT EXISTS sessions (
     gpus        INTEGER,
     cpus        INTEGER,
     state       TEXT NOT NULL,
+    backend     TEXT,
+    pid         INTEGER,
     updated_ts  TEXT NOT NULL,
     PRIMARY KEY (label, purpose)
 );
@@ -70,7 +72,18 @@ class Ledger:
         self._path.parent.mkdir(parents=True, exist_ok=True)
         self._db = await aiosqlite.connect(self._path)
         try:
-            await self._db.executescript(SCHEMA)  # 多语句必须 executescript
+            # 逐条执行（executescript 的隐式 COMMIT 与迁移交错过一次事故）
+            import contextlib
+            import sqlite3
+
+            for stmt in (x + ";" for x in SCHEMA.split(";") if x.strip()):
+                await self._db.execute(stmt)
+            # 旧库迁移：v0.1.x 的 sessions 表无 backend/pid 列（已存在则跳过）
+            with contextlib.suppress(sqlite3.OperationalError):
+                await self._db.execute("ALTER TABLE sessions ADD COLUMN backend TEXT")
+            with contextlib.suppress(sqlite3.OperationalError):
+                await self._db.execute("ALTER TABLE sessions ADD COLUMN pid INTEGER")
+            await self._db.commit()
         except Exception:
             await self.close()
             raise
@@ -115,7 +128,7 @@ class Ledger:
         """提交入库（新作业）；同名同连接则更新。"""
         if self._db is None:
             return
-        from datetime import UTC, datetime
+        from datetime import datetime
 
         now = datetime.now(UTC).isoformat(timespec="seconds")
         values = {f: fields.get(f) for f in self._JOB_FIELDS}
@@ -134,7 +147,7 @@ class Ledger:
         """按字段更新作业（状态核对用）。"""
         if self._db is None:
             return
-        from datetime import UTC, datetime
+        from datetime import datetime
 
         updates = {k: v for k, v in fields.items() if k in self._JOB_FIELDS}
         updates["updated_ts"] = datetime.now(UTC).isoformat(timespec="seconds")
@@ -210,32 +223,28 @@ class Ledger:
             return
         from datetime import datetime
 
-        cols = ["label", "purpose", "job_id", "node", "partition", "gpus", "cpus", "state"]
+        cols = [
+            "label",
+            "purpose",
+            "job_id",
+            "node",
+            "partition",
+            "gpus",
+            "cpus",
+            "state",
+            "backend",
+            "pid",
+        ]
         row = {c: fields.get(c) for c in cols}
         row["updated_ts"] = datetime.now(UTC).isoformat(timespec="seconds")
-        updates = ", ".join(f"{c} = ?" for c in [*cols[2:], "updated_ts"])
+        all_cols = [*cols, "updated_ts"]
+        updates = ", ".join(f"{c} = excluded.{c}" for c in [*cols[2:], "updated_ts"])
+        placeholders = ", ".join("?" for _ in all_cols)
         await self._db.execute(
-            f"INSERT INTO sessions ({', '.join(cols)}, updated_ts)"
-            f" VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)"
+            f"INSERT INTO sessions ({', '.join(all_cols)})"
+            f" VALUES ({placeholders})"
             f" ON CONFLICT(label, purpose) DO UPDATE SET {updates}",
-            [
-                row["label"],
-                row["purpose"],
-                row["job_id"],
-                row["node"],
-                row["partition"],
-                row["gpus"],
-                row["cpus"],
-                row["state"],
-                row["updated_ts"],
-                row["job_id"],
-                row["node"],
-                row["partition"],
-                row["gpus"],
-                row["cpus"],
-                row["state"],
-                row["updated_ts"],
-            ],
+            [row[c] for c in all_cols],
         )
         await self._db.commit()
 
@@ -252,8 +261,8 @@ class Ledger:
         if self._db is None:
             return []
         cursor = await self._db.execute(
-            "SELECT label, purpose, job_id, node, partition, gpus, cpus, state, updated_ts"
-            " FROM sessions ORDER BY updated_ts DESC"
+            "SELECT label, purpose, job_id, node, partition, gpus, cpus, state,"
+            " backend, pid, updated_ts FROM sessions ORDER BY updated_ts DESC"
         )
         rows = await cursor.fetchall()
         keys = [
@@ -265,6 +274,8 @@ class Ledger:
             "gpus",
             "cpus",
             "state",
+            "backend",
+            "pid",
             "updated_ts",
         ]
         return [dict(zip(keys, r, strict=True)) for r in rows]
@@ -275,7 +286,7 @@ class Ledger:
         """同一连接同一命令在窗口内的执行次数（agent 循环熔断用）。"""
         if self._db is None:
             return 0
-        from datetime import UTC, datetime, timedelta
+        from datetime import datetime, timedelta
 
         since = (datetime.now(UTC) - timedelta(seconds=seconds)).isoformat(timespec="seconds")
         cursor = await self._db.execute(
