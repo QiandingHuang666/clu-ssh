@@ -213,3 +213,17 @@ async def test_probe_last_granted_wins() -> None:
     info = await probe_session(runner, "gzu", "train")
     assert info["job_id"] == "222"
     assert info["node"] == "new-9"
+
+
+async def test_allocate_without_tmux() -> None:
+    """远端没有 tmux：明确报错并建议 exec/submit。"""
+
+    class NoTmux(FakeTmuxRunner):
+        async def __call__(self, command: str, *, timeout: float | None = None) -> ExecResult:
+            if command.startswith("command -v tmux"):
+                return ExecResult(command, 1, "", "", 1)
+            return await super().__call__(command, timeout=timeout)
+
+    info = await alloc.allocate(NoTmux(), "box", purpose="t", partition="cpu", wait=1)
+    assert info["state"] == "failed"
+    assert "tmux" in str(info["error"]) and "exec" in str(info["error"])

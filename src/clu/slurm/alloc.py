@@ -290,6 +290,21 @@ async def allocate(
             }
 
     request_desc = describe_request(shown_resource, gpus, cpus, partition)
+    # 前置检查：远端必须有 tmux（有的机器没有；给出可行动的错误而非远端乱码）
+    tmux_probe = await runner("command -v tmux")
+    if tmux_probe.exit_code != 0:
+        return {
+            "connection": label,
+            "purpose": purpose,
+            "session": tmux.session_name(label, purpose),
+            "state": "failed",
+            "request": request_desc,
+            "error": (
+                "远端未安装 tmux，交互式会话（alloc/attach）不可用。"
+                "请先在远端安装 tmux（apt/yum install tmux）；"
+                "一次性命令请改用 exec，批处理任务请改用 submit。"
+            ),
+        }
     name = tmux.session_name(label, purpose)
     # 同名活会话保护（用户裁决 B）：活着即报 exists，防"以为新抢了卡实际复用旧的"
     if await tmux.has_session(runner, name):

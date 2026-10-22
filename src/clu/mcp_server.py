@@ -215,7 +215,10 @@ async def slurm_alloc(
 
 @server.tool(name="session_list", annotations=_READONLY)
 async def session_list(connection: str | None = None) -> dict[str, Any]:
-    """列出 tmux 托管会话（alloc 资源会话），含所属连接/用途/创建时间。"""
+    """列出 tmux 托管会话（仅 alloc 抢占产生的资源会话；普通查询任务请用 exec）。
+
+    要求远端装有 tmux；机器上没有 tmux 时列表为空或 alloc 会明确报错。
+    """
     return await _call("session.list", {"label": connection})
 
 
