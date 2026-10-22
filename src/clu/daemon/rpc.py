@@ -486,6 +486,32 @@ async def _session_list(ctx: DaemonContext, params: dict[str, Any]) -> dict[str,
     unreachable = [err for _, err in pairs if err is not None]
     dead_conns = {str(e["connection"]) for e in unreachable}
 
+    # 非 tmux 后端逐会话探活（并行、带超时）：pty-daemon/setsid 的存活真相在远端，
+    # 登记表只是缓存——list 必须回到真相，否则死会话一直显示"在线"
+    async def probe_non_tmux(row: dict[str, object]) -> dict[str, object]:
+        label = str(row["label"])
+        purpose = str(row["purpose"])
+        backend = str(row.get("backend") or "tmux")
+        if backend == "pty-daemon":
+            from clu.session_backend import info_ptyd
+
+            ptyd_bin = await _remote_ptyd_bin(_runner(ctx, label))
+            return await info_ptyd(_runner(ctx, label), ptyd_bin, purpose)
+        from clu.session_backend import info_setsid
+
+        return await info_setsid(_runner(ctx, label), int(str(row.get("pid") or 0)), None)
+
+    non_tmux_rows = [r for r in registry if r.get("backend") in ("setsid", "pty-daemon")]
+    non_tmux_probes: dict[tuple[str, str], dict[str, object]] = {}
+    if non_tmux_rows:
+        results = await asyncio.gather(
+            *(asyncio.wait_for(probe_non_tmux(r), timeout=8.0) for r in non_tmux_rows),
+            return_exceptions=True,
+        )
+        for r, info in zip(non_tmux_rows, results, strict=True):
+            key = (str(r["label"]), str(r["purpose"]))
+            non_tmux_probes[key] = info if isinstance(info, dict) else {}
+
     merged: dict[tuple[str, str], dict[str, object]] = {}
     for row in registry:
         key = (str(row["label"]), str(row["purpose"]))
@@ -496,7 +522,16 @@ async def _session_list(ctx: DaemonContext, params: dict[str, Any]) -> dict[str,
         non_tmux = row.get("backend") in ("setsid", "pty-daemon")
         if key[0] in dead_conns:
             merged[key]["verified"] = False  # 不可达：上次已知（stale）
-        elif key in live or non_tmux:  # 非 tmux 后端：登记表即真相（info 时探活）
+        elif non_tmux:
+            probe_result = non_tmux_probes.get(key, {})
+            state = str(probe_result.get("state") or "unknown")
+            if state in ("exited", "failed", "unknown"):
+                await ctx.ledger.delete_session(*key)  # 远端已亡：销账
+                merged.pop(key)
+            else:
+                merged[key]["verified"] = True
+                merged[key]["state"] = state
+        elif key in live:
             merged[key]["verified"] = True
         else:
             await ctx.ledger.delete_session(*key)  # tmux 已亡：销账

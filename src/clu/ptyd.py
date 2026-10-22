@@ -10,11 +10,12 @@ from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
-import clu
 from clu.protocol import CluError
 
 ASSET_DIR = Path(__file__).parent / "ptyd"
 ARCH_MAP = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
+# clu-ptyd 独立版本（Go 改动时递增，触发远端重新部署；与 clu 的 __version__ 解耦）
+PTYD_VERSION = "2"
 SftpPut = Callable[[Path, str], Awaitable[None]]
 Runner = Any  # runner(command, *, timeout) -> ExecResult
 
@@ -33,7 +34,7 @@ async def ensure_binary(runner: Runner, sftp_put: SftpPut, *, timeout: float = 3
         raise CluError("internal", "无法解析远端家目录")
     bin_path = f"{home}/.clu/bin/clu-ptyd"
     chk = await runner(f"{bin_path} version 2>/dev/null || true")
-    if chk.exit_code == 0 and clu.__version__ in chk.stdout:
+    if chk.exit_code == 0 and PTYD_VERSION in chk.stdout:
         return bin_path
     local = ASSET_DIR / f"clu-ptyd-linux-{goarch}.gz"
     if not local.exists():
@@ -41,13 +42,15 @@ async def ensure_binary(runner: Runner, sftp_put: SftpPut, *, timeout: float = 3
     # 先建目录再上传（SFTP put 不会自动创建父目录）
     await runner(f"mkdir -p $(dirname {shlex.quote(bin_path)})")
     await sftp_put(local, f"{bin_path}.gz")
+    # 运行中的二进制不可直接覆盖（Text file busy）：停旧守护 → 临时文件 → 原子 mv
     r = await runner(
         f"mkdir -p $(dirname {shlex.quote(bin_path)})"
-        f" && gunzip -cf {bin_path}.gz > {bin_path} && chmod 700 {bin_path}"
-        f" && rm -f {bin_path}.gz"
+        f" && {bin_path} stop 2>/dev/null || true"
+        f" && gunzip -cf {bin_path}.gz > {bin_path}.new && chmod 700 {bin_path}.new"
+        f" && mv -f {bin_path}.new {bin_path} && rm -f {bin_path}.gz"
         f" && {bin_path} version"
     )
-    if r.exit_code != 0 or clu.__version__ not in r.stdout:
+    if r.exit_code != 0 or PTYD_VERSION not in r.stdout:
         raise CluError("internal", f"ptyd 部署失败：{(r.stderr or r.stdout).strip()[:200]}")
     return bin_path
 

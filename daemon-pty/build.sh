@@ -3,7 +3,7 @@
 set -e
 cd "$(dirname "$0")"
 OUT=${1:-../src/clu/ptyd}
-VERSION=$(sed -n 's/__version__ = "\(.*\)"/\1/p' ../src/clu/__init__.py | head -1)
+VERSION=$(sed -n 's/^PTYD_VERSION = "\(.*\)"/\1/p' ../src/clu/ptyd.py | head -1)
 [ -n "$VERSION" ] || VERSION=dev
 mkdir -p "$OUT"
 for arch in amd64 arm64; do
