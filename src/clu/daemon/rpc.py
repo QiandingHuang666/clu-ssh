@@ -12,6 +12,7 @@ from typing import Any
 
 from pydantic import ValidationError
 
+import clu.session_backend as session_backend
 import clu.slurm.alloc as allocops
 import clu.slurm.commands as slurm
 import clu.tmux as tmux
@@ -27,6 +28,7 @@ from clu.protocol import (
     ERR_LOOP_DETECTED,
     ERR_METHOD_NOT_FOUND,
     ERR_NOT_FOUND,
+    CluError,
 )
 from clu.slurm.alloc import probe_session
 from clu.ssh.connection import CluConnectionError, ExecResult
@@ -491,9 +493,10 @@ async def _session_list(ctx: DaemonContext, params: dict[str, Any]) -> dict[str,
             await ctx.ledger.delete_session(*key)
             continue
         merged[key] = dict(row, connection=row["label"])
+        non_tmux = row.get("backend") in ("setsid", "pty-daemon")
         if key[0] in dead_conns:
             merged[key]["verified"] = False  # 不可达：上次已知（stale）
-        elif key in live:
+        elif key in live or non_tmux:  # 非 tmux 后端：登记表即真相（info 时探活）
             merged[key]["verified"] = True
         else:
             await ctx.ledger.delete_session(*key)  # tmux 已亡：销账
@@ -554,12 +557,119 @@ async def check_registered_sessions(ctx: "DaemonContext") -> dict[str, int]:
     }
 
 
+async def _sftp_put(ctx: DaemonContext, label: str, local: Path, remote: str) -> None:
+    """经连接池 SFTP 通道上传（ptyd 二进制部署用）。"""
+    from clu.transfer import sftp as sftp_mod
+
+    conn = await ctx.pool.acquire(label)
+    real = sftp_mod._real(conn)
+    async with real.raw.start_sftp_client() as sftp:
+        await sftp.put(str(local), remote)
+
+
+@dispatcher.method("session.start")
+async def _session_start(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
+    """在任意连接（集群/服务器）上启动托管会话（保活）。
+
+    后端自动选择：远端有 tmux → tmux 交互会话（可 attach）；
+    无 tmux → 部署 pty-daemon 静态守护（可 attach，远端零依赖）；
+    部署不可行且显式给出 command → setsid 后台保活（不可 attach，仅日志）。
+    """
+    label = str(params["label"])
+    purpose = str(params["purpose"])
+    command = params.get("command")
+    _get_connection(ctx, label)
+    runner = _runner(ctx, label)
+    auto_mode = "backend" not in params
+    backend = params.get("backend") or (
+        "tmux" if await session_backend.has_tmux(runner) else "pty-daemon"
+    )
+
+    ptyd_bin: str | None = None
+    if backend == "pty-daemon":
+        import clu.ptyd as ptyd_mod
+
+        def _put(local: Path, remote: str) -> Awaitable[None]:
+            return _sftp_put(ctx, label, local, remote)
+
+        try:
+            ptyd_bin = await ptyd_mod.ensure_binary(runner, _put)
+            await ptyd_mod.ensure_running(runner, ptyd_bin)
+        except (CluError, CluConnectionError) as exc:
+            if command and auto_mode:
+                backend = "setsid"  # 自动模式：回退 setsid
+            else:
+                raise RpcFailure(
+                    ERR_NOT_FOUND,
+                    f"远端无 tmux，pty-daemon 部署失败：{exc.message}；"
+                    "可提供 command 走 setsid 保活，或在远端安装 tmux",
+                ) from exc
+    if backend == "setsid" and not command:
+        raise RpcFailure(ERR_INVALID_PARAMS, "setsid 后台保活必须提供 command")
+
+    info = await session_backend.start(
+        runner,
+        label,
+        purpose,
+        backend=backend,
+        command=command if backend == "setsid" else None,
+        ptyd_bin=ptyd_bin,
+    )
+    if info.get("state") == "failed":
+        return {"connection": label, **info}
+    await ctx.ledger.upsert_session(
+        label=label,
+        purpose=purpose,
+        backend=backend,
+        pid=info.get("pid"),
+        state=str(info.get("state") or "running"),
+    )
+    await ctx.ledger.record(
+        kind="session",
+        connection=label,
+        command=command or backend,
+        summary=f"会话 {purpose}: {backend}/running",
+    )
+    return {"connection": label, **info}
+
+
+async def _remote_ptyd_bin(runner: Any) -> str:
+    """远端 ptyd 二进制绝对路径（部署过才有；info/release 用）。"""
+    home = (await runner('printf "%s" "$HOME"')).stdout.strip()
+    return f"{home}/.clu/bin/clu-ptyd"
+
+
 @dispatcher.method("session.info")
 async def _session_info(ctx: DaemonContext, params: dict[str, Any]) -> dict[str, Any]:
     label = str(params["label"])
     purpose = str(params["purpose"])
     _get_connection(ctx, label)
-    info = await allocops.session_info(_runner(ctx, label), label, purpose)
+    runner = _runner(ctx, label)
+    row = next(
+        (
+            r
+            for r in await ctx.ledger.list_sessions()
+            if r["label"] == label and r["purpose"] == purpose
+        ),
+        None,
+    )
+    backend = str((row or {}).get("backend") or "tmux")
+
+    if backend == "setsid" and row and row.get("pid"):
+        from clu.session_backend import info_setsid
+
+        info = await info_setsid(runner, int(str(row.get("pid") or 0)), None)
+        await ctx.ledger.upsert_session(label=label, purpose=purpose, state=str(info.get("state")))
+        return dict(row, **info)
+    if backend == "pty-daemon":
+        from clu.session_backend import info_ptyd
+
+        ptyd_bin = await _remote_ptyd_bin(runner)
+        info = await info_ptyd(runner, ptyd_bin, purpose)
+        await ctx.ledger.upsert_session(label=label, purpose=purpose, state=str(info.get("state")))
+        return dict(row or {}, backend=backend, purpose=purpose, **info)
+
+    info = await allocops.session_info(runner, label, purpose)
     if info.get("state") == "granted":  # 顺带刷新登记表
         await ctx.ledger.upsert_session(
             label=label,
@@ -576,15 +686,38 @@ async def _session_release(ctx: DaemonContext, params: dict[str, Any]) -> dict[s
     label = str(params["label"])
     purpose = str(params["purpose"])
     _get_connection(ctx, label)
-    result = await allocops.release(_runner(ctx, label), label, purpose)
+    runner = _runner(ctx, label)
+    row = next(
+        (
+            r
+            for r in await ctx.ledger.list_sessions()
+            if r["label"] == label and r["purpose"] == purpose
+        ),
+        None,
+    )
+    backend = str((row or {}).get("backend") or "tmux")
+
+    released = False
+    if backend == "setsid":
+        from clu.session_backend import release_setsid
+
+        if row and row.get("pid"):
+            released = await release_setsid(runner, int(str(row.get("pid") or 0)))
+    elif backend == "pty-daemon":
+        from clu.session_backend import release_ptyd
+
+        ptyd_bin = await _remote_ptyd_bin(runner)
+        released = await release_ptyd(runner, ptyd_bin, purpose)
+    else:
+        released = bool((await allocops.release(runner, label, purpose))["released"])
     await ctx.ledger.delete_session(label, purpose)
     await ctx.ledger.record(
         kind="release",
         connection=label,
         command=f"release {purpose}",
-        summary=f"释放 alloc 会话 {purpose}: {'成功' if result['released'] else '不存在'}",
+        summary=f"释放 {backend} 会话 {purpose}: {'成功' if released else '不存在'}",
     )
-    return result
+    return {"connection": label, "purpose": purpose, "released": released, "backend": backend}
 
 
 @dispatcher.method("transfer.upload")
