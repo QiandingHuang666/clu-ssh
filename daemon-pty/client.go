@@ -1,12 +1,14 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net"
 	"os"
 	"path/filepath"
+	"sync/atomic"
 )
 
 func sockPath() (string, error) {
@@ -77,7 +79,7 @@ func runAttach(req request) error {
 	if logPath, ok := resp.Data.(string); ok && logPath != "" {
 		replayTail(os.Stdout, logPath, 8192)
 	}
-	fmt.Fprintln(os.Stderr, "[clu] 已 attach。detach = 断开本连接（ssh 转义 ~. 或关窗口），会话继续；exit = 结束会话。")
+	fmt.Fprintln(os.Stderr, "[clu] 已 attach。detach = Ctrl-]（会话继续）；exit = 结束会话。")
 	fd := int(os.Stdin.Fd())
 	if isTerminal(fd) {
 		old, err := makeRaw(fd)
@@ -87,8 +89,35 @@ func runAttach(req request) error {
 		defer restore(fd, old)
 	}
 	done := make(chan error, 2)
-	go func() { _, err := io.Copy(conn, os.Stdin); done <- err }()
+	var detached atomic.Bool
+	go func() {
+		// stdin -> pty；拦截 Ctrl-] (0x1d) 作为 detach 键（不转发给远端 shell）
+		buf := make([]byte, 4096)
+		for {
+			n, err := os.Stdin.Read(buf)
+			if n > 0 {
+				if i := bytes.IndexByte(buf[:n], 0x1d); i >= 0 {
+					detached.Store(true)
+					_ = conn.Close()
+					done <- nil
+					return
+				}
+				if _, werr := conn.Write(buf[:n]); werr != nil {
+					done <- werr
+					return
+				}
+			}
+			if err != nil {
+				done <- err
+				return
+			}
+		}
+	}()
 	go func() { _, err := io.Copy(os.Stdout, conn); done <- err }()
+	<-done
+	if detached.Load() {
+		return nil // Ctrl-] detach：正常退出，不把关闭连接的写错误当失败
+	}
 	return <-done
 }
 

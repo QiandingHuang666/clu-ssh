@@ -27,6 +27,7 @@ alias clu='uv run --project /path/to/clu-ssh clu'
 
 要求：macOS（Intel / Apple Silicon）/ Linux / Windows；Python ≥ 3.11；SSH **公钥认证**
 （不支持密码登录的连接）。Windows 上 `clu attach` 需要系统 OpenSSH 客户端。
+                                          detach：tmux 用 Ctrl-b d，pty-daemon 用 Ctrl-]；exit 结束会话
 
 ## 3. 五分钟上手
 

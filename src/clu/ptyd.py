@@ -15,7 +15,7 @@ from clu.protocol import CluError
 ASSET_DIR = Path(__file__).parent / "ptyd"
 ARCH_MAP = {"x86_64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
 # clu-ptyd 独立版本（Go 改动时递增，触发远端重新部署；与 clu 的 __version__ 解耦）
-PTYD_VERSION = "2"
+PTYD_VERSION = "4"
 SftpPut = Callable[[Path, str], Awaitable[None]]
 Runner = Any  # runner(command, *, timeout) -> ExecResult
 
