@@ -758,8 +758,23 @@ def attach(label: str, purpose: str) -> None:
                 jump_target += f":{jump.port}"
             args += ["-J", jump_target]
     target = f"{cfg.user}@{cfg.host}"
-    args += [target, "tmux attach -t " + session_name(label, purpose)]
-    console.print(f"[dim]{' '.join(args[: len(args) - 1])} tmux attach ...[/dim]")
+    # 按登记表 backend 分派远端命令：tmux → tmux attach；pty-daemon → clu-ptyd attach
+    remote_cmd = ""
+    try:
+        ensure_daemon()
+        info = _do_request("session.info", {"label": label, "purpose": purpose})
+    except CluError:
+        info = {}
+    backend = str(info.get("backend") or "tmux")
+    if backend == "pty-daemon":
+        remote_cmd = "~/.clu/bin/clu-ptyd attach -name " + purpose
+    elif backend == "setsid":
+        _fail("setsid 后端是后台保活（不可交互 attach）；请用 session_info 查看日志")
+        return
+    else:
+        remote_cmd = "tmux attach -t " + session_name(label, purpose)
+    args += [target, remote_cmd]
+    console.print(f"[dim]{' '.join(args[: len(args) - 1])} {remote_cmd}[/dim]")
     if sys.platform == "win32":
         # Windows 无 execvp 语义：前台运行 ssh，退出码透传
         raise typer.Exit(subprocess.run(args, check=False).returncode)
