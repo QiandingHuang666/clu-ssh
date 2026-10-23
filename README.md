@@ -1,5 +1,7 @@
 # clu
 
+简体中文 | [English](README.en.md)
+
 > SSH 会话保持/管理 + Slurm 集群与普通服务器的 AI agent 能力层。
 > 面向高校师生的单用户工具：任意 MCP 客户端（Claude Code、Codex 等）与 `clu` CLI 共享同一 daemon。
 
@@ -19,19 +21,14 @@
 
 ## 实测对比：更快、更省（2026-10-23）
 
-真实会话实测：**Claude Code CLI 2.1.309** + 模型 **deepseek-v4-flash**（经本地中转），
-目标集群为 `cluster-r`（贵州大学登录节点经 frp 转发，Slurm 22.05.8）。
+真实会话实测：**Claude Code CLI 2.1.309** + 模型 **deepseek-v4-flash**。
 
-两组配置，各自独立目录、同一 PATH 隔离策略：
-
-- **clu（MCP）**：仅注册 clu MCP server（`--strict-mcp-config`），无技能
-- **baseline（裸 ssh）**：PATH 仅系统目录，无 clu、无技能、无 MCP，只用 ssh + sinfo/squeue/sbatch
 
 **4 个测试任务**（每任务一次 `claude -p` 单轮会话，`--max-turns 12`）：
 
-1. 查看 `cluster-r` 的 `gpu-a100` 分区空闲 GPU 卡数，以及哪些节点有空闲
+1. 查看 `cluster` 的 `gpu-a100` 分区空闲 GPU 卡数，以及哪些节点有空闲
 2. 列出我当前的全部作业和状态
-3. 在 `cpu56c256g` 分区提交一个测试作业（1 核 CPU、5 分钟、`sleep 240`），返回 job id
+3. 在 `xxx` 分区提交一个测试作业（1 核 CPU、5 分钟、`sleep 240`），返回 job id
 4. 查看该作业的状态与输出日志，然后取消它
 
 成本按 token 计（输入 + 输出 + 缓存读，与中转计费口径一致）。
@@ -51,7 +48,7 @@
 **正确性**：两组 4/4 全部正确；提交的作业均真实存在（job id 经 squeue 与 clu 台账双向核对），
 取消操作均生效。
 
-图表文件（PNG / PDF / 交互式 HTML）：[`report/`](report/)。
+
 **为什么更快更省**：`resources`、`jobs`、`submit` 等工具把"取原始数据 → 解析 → 拼命令"
 收进一次调用——agent 不再需要 `sinfo`/`scontrol`/`squeue` 多轮试探。轮次从 42 降到 18，
 token 从 72.3 万降到 28.0 万；MCP 工具 schema 本身只占约 3.9k tokens，远低于多轮命令的成本。
@@ -97,6 +94,43 @@ alias clu='uv run --project /path/to/clu-ssh clu'
 
 要求：SSH **公钥认证**（不支持密码登录的连接）。Windows 上 `clu attach` 需要系统
 OpenSSH 客户端。
+
+### 接入 MCP 客户端
+
+`clu-mcp` 是标准 **stdio MCP server**（服务器名 `clu`），启动时自动拉起本地 daemon，
+无需任何环境变量。
+
+**Claude Code**
+
+```bash
+claude mcp add --scope user clu -- clu-mcp        # 用户级
+claude mcp add clu -- clu-mcp                     # 项目级
+# 源码安装时用绝对路径：/path/to/clu-ssh/.venv/bin/clu-mcp
+```
+
+**Codex CLI** —— 编辑 `~/.codex/config.toml`：
+
+```toml
+[mcp_servers.clu]
+command = "clu-mcp"
+args = []
+```
+
+**其他 MCP 客户端**（Claude Desktop / Cursor / Cline / Windsurf 等）—— 在 MCP 配置中加入：
+
+```json
+{
+  "mcpServers": {
+    "clu": { "command": "clu-mcp", "args": [] }
+  }
+}
+```
+
+常见位置：Claude Desktop（macOS `~/Library/Application Support/Claude/claude_desktop_config.json`，
+Windows `%APPDATA%\Claude\claude_desktop_config.json`）、Cursor（`~/.cursor/mcp.json` 或项目 `.cursor/mcp.json`）；
+Cline / Windsurf 在各自 MCP 设置界面添加同一条目。
+
+接入后先执行 `clu connection import` 配置连接，可用工具见 [§6 MCP 工具手册](#6-mcp-工具手册)。
 
 ## 3. 五分钟上手
 
@@ -229,69 +263,28 @@ clu forward list
 clu forward remove fwd-1
 ```
 
-## 6. 接入 MCP 客户端
+## 6. MCP 工具手册
 
-`clu-mcp` 是标准 **stdio MCP server**（服务器名 `clu`），启动时自动拉起本地 daemon，
-无需任何环境变量。接入任一客户端后即可使用下表的 16 个工具。
+`clu-mcp` 提供 16 个工具；○ 为只读工具（可在客户端权限设置中配置免确认）。
+所有写操作在 daemon 端经过安全门（见 §8）。
 
-### Claude Code
-
-```bash
-# 用户级（所有会话可用）
-claude mcp add --scope user clu -- clu-mcp
-
-# 项目级（随项目共享）
-claude mcp add clu -- clu-mcp
-```
-
-源码安装时把命令换成绝对路径：`claude mcp add --scope user clu -- /path/to/clu-ssh/.venv/bin/clu-mcp`。
-
-### Codex CLI
-
-编辑 `~/.codex/config.toml`：
-
-```toml
-[mcp_servers.clu]
-command = "clu-mcp"
-args = []
-```
-
-### 其他 MCP 客户端（Claude Desktop / Cursor / Cline / Windsurf 等）
-
-在客户端的 MCP 配置文件中加入：
-
-```json
-{
-  "mcpServers": {
-    "clu": { "command": "clu-mcp", "args": [] }
-  }
-}
-```
-
-常见位置：Claude Desktop（macOS `~/Library/Application Support/Claude/claude_desktop_config.json`，
-Windows `%APPDATA%\Claude\claude_desktop_config.json`）、Cursor（`~/.cursor/mcp.json` 或项目 `.cursor/mcp.json`）。
-Cline / Windsurf 在各自的 MCP 设置界面添加同一条目即可。
-
-> 一次性验证可用 `claude -p "..." --mcp-config <json> --strict-mcp-config`，
-> 只加载指定 MCP 配置、忽略其他来源。
-
-接入后先执行 `clu connection import` 配置连接，再让 agent 使用工具。
-
-接入后 16 个工具（带 ○ 的只读，可在 Claude Code 权限设置里配免确认）：
-
-| 工具 | 说明 |
-|---|---|
-| ○ `connection_list` | 连接与连接池健康状态 |
-| `exec` | 远程执行单条命令（安全门在 server 端强制生效） |
-| ○ `jobs` / ○ `status` | 作业列表 / 分区与队列概览（需 cluster 连接） |
-| ○ `resources` | **资源余量**：每分区 CPU/GPU 的总量/已占/空闲与节点数（单次往返，数据源为节点 AllocTRES 权威值）。一开始就能限定范围：`filter=cpu_free`（有空闲 CPU）、`cpu_gpu_free`（CPU 和 GPU 都有空闲）、`fully_idle`（CPU+GPU 全空闲），`gpu_only=true` 只看有 GPU 的节点（可叠加）；带过滤自动附节点明细 |
-| `submit` / `cancel` | 提交作业（可指定分区/节点/CPU/GPU/时限；脚本与 stdout/stderr 统一落远端 `~/.clu/jobs/<连接>/`，脚本内容与路径记入本地台账）/ 取消作业 |
-| ○ `job_list` | 作业台账：提交历史、脚本路径与内容、申请资源、节点、日志路径、最近核对状态（只读） |
-| ○ `log` | 作业 stdout（自动定位路径并 tail） |
-| `alloc` | **抢占接口（自动选择，无需先查询）**：resource 缺省 = GPU 优先、无空闲 GPU 回退 CPU；`resource=gpu/cpu` 只抢该类；`gpus`/`cpus`/`partition` 可指定（GPU 抢占可与 cpus 组合）。分区按单节点余量（含 CPU 核数需求）排名、提交被弹回自动轮换候选。granted 后 `clu attach` 即入计算节点 shell。**CPU 核数默认策略**：GPU 抢占未指定时取 profile 的 `alloc_default_cpus`（未配置则集群 slurm 默认，通常 1 核）；CPU 抢占未指定默认 4 核 |
-| ○ `session_list` / ○ `session_info` / `session_release` | 托管会话查看与释放 |
-| `upload` / `download` | SFTP 传输（双侧父目录自动创建） |
-| ○ `ledger_query` | 检索历史执行（跨会话记忆） |
+| 工具 | 说明 | 关键参数 |
+|---|---|---|
+| ○ `connection_list` | 连接与连接池健康状态 | — |
+| `exec` | 远程执行单条命令（安全门在 server 端强制生效） | `connection`, `command`, `timeout?` |
+| ○ `jobs` | 当前用户的作业列表（实时 squeue） | `connection`, `states?` |
+| ○ `status` | 分区与队列概览 | `connection` |
+| ○ `resources` | **资源余量**：每分区 CPU/GPU 总量/已占/空闲与节点数（单次往返，AllocTRES 权威值）；`filter=cpu_free` / `cpu_gpu_free` / `fully_idle` 从第一步限定范围，`gpu_only` 可叠加；带过滤自动附节点明细 | `connection`, `partition?`, `filter?`, `gpu_only?`, `include_nodes?` |
+| `submit` | 提交作业：脚本与 stdout/stderr 统一落远端 `~/.clu/jobs/<连接>/`，脚本内容与路径记入本地台账 | `connection`, `script`, `name?`, `partition?`, `nodes?`, `cpus?`, `gpus?`, `time_limit?` |
+| `cancel` | 取消单个作业 | `connection`, `job_id` |
+| ○ `job_list` | 作业台账：脚本路径与内容、申请资源、节点、日志路径、最近核对状态 | `connection?`, `active_only?` |
+| ○ `log` | 作业 stdout（自动定位路径并 tail） | `connection`, `job_id`, `tail?` |
+| `alloc` | **抢占接口（自动选择，无需先查询）**：缺省 GPU 优先、无空闲 GPU 回退 CPU；`resource=gpu/cpu` 只抢该类；分区按单节点余量排名、提交被弹回自动轮换；granted 后 `clu attach` 入计算节点 shell。默认核数 = `min(节点总核÷总卡, 空闲核)`（profile 可覆盖） | `connection`, `purpose?`, `resource?`, `gpus?`, `cpus?`, `partition?`, `wait?` |
+| ○ `session_list` | 托管会话列表（tmux / pty-daemon / setsid） | `connection?` |
+| ○ `session_info` | 会话详情：状态、job/节点、日志尾部 | `connection`, `purpose` |
+| `session_release` | 释放会话（资源归还） | `connection`, `purpose` |
+| `upload` / `download` | SFTP 传输，双侧父目录自动创建 | `connection`, `local_path`, `remote_path` |
+| ○ `ledger_query` | 检索历史执行（跨会话记忆） | `connection?`, `kind?`, `keyword?`, `job_id?`, `since?`, `limit?` |
 
 ## 7. 典型场景
 
