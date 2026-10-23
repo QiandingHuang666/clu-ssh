@@ -134,19 +134,64 @@ Cline / Windsurf 在各自 MCP 设置界面添加同一条目。
 
 ## 3. 五分钟上手
 
+### 3.1 前置：配置 SSH 公钥登录（首次使用）
+
+clu 只支持公钥认证，不保存任何密码。如果这台机器还没配过公钥登录，先做这一步：
+
 ```bash
-# ① 导入你现有的 ssh config（一次性副本，只导公钥可达条目）
+# ① 看有没有现成密钥（有 .pub 就跳过生成）
+ls ~/.ssh/id_ed25519.pub 2>/dev/null
+
+# ② 没有就生成一对（一路回车即可；建议设置口令，交给 ssh-agent 记住）
+ssh-keygen -t ed25519 -C "you@example.com"
+
+# ③ 把公钥装到服务器（会提示输入一次服务器密码）
+ssh-copy-id -p 22 you@hpc.example.edu.cn
+
+# ④ 验证：这次应该不再询问密码
+ssh -p 22 you@hpc.example.edu.cn hostname
+```
+
+Windows 没有 `ssh-copy-id` 时，在 PowerShell 里等价操作：
+
+```powershell
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh -p 22 you@hpc.example.edu.cn "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+```
+
+可选但推荐：把主机写进 `~/.ssh/config`，以后 `ssh gzu` 就能连：
+
+```
+Host gzu
+  HostName hpc.example.edu.cn
+  Port 22
+  User you
+  IdentityFile ~/.ssh/id_ed25519
+```
+
+### 3.2 让 clu 认识你的机器
+
+```bash
+# 有 ~/.ssh/config：一次性导入（副本，只导公钥可达条目，自动解析 ProxyJump）
 clu connection import
 
-# ② Slurm 集群的条目要标成 cluster（import 默认按 IP 启发式标 instance/local）
-clu connection add gzu --host hpc.example.edu.cn --user you --port 22 --kind cluster
-#    或者把导入的条目改 kind：编辑 ~/.config/clu/connections.toml
+# 没有 ssh config：直接添加
+clu connection add gzu --host hpc.example.edu.cn --user you --port 22
 
-# ③ 拉起 daemon（此后任何命令都会自动 ensure，通常不用手动）
+# Slurm 集群要标成 cluster（import 默认按 IP 启发式标 instance/local）
+clu connection add gzu --host hpc.example.edu.cn --user you --port 22 --kind cluster
+#    也可以编辑 ~/.config/clu/connections.toml 修改已有条目的 kind
+```
+
+### 3.3 试一下
+
+```bash
+# 拉起 daemon（此后任何命令都会自动 ensure，通常不用手动）
 clu server ensure
 
-# ④ 试试
-clu connection check gzu          # 经连接池真连一次
+# 经连接池真连一次
+clu connection check gzu
+
+# 跑一条远程命令
 clu exec gzu "squeue -u $USER | head"
 ```
 

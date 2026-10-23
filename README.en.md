@@ -136,19 +136,65 @@ After connecting, run `clu connection import` to configure connections; the avai
 
 ## 3. Quick start (five minutes)
 
+### 3.1 Prerequisite: set up SSH public-key login (first time only)
+
+clu supports public-key authentication only and stores no passwords. If this machine has never used key-based
+login, do this first:
+
 ```bash
-# 1. Import your existing ssh config (one-off copy; only public-key-reachable entries)
+# 1. Check for an existing key (skip generation if a .pub file exists)
+ls ~/.ssh/id_ed25519.pub 2>/dev/null
+
+# 2. Generate a pair if needed (press Enter through the prompts; a passphrase is recommended — ssh-agent remembers it)
+ssh-keygen -t ed25519 -C "you@example.com"
+
+# 3. Install the public key on the server (asks for the server password once)
+ssh-copy-id -p 22 you@hpc.example.edu.cn
+
+# 4. Verify: this time it should not ask for a password
+ssh -p 22 you@hpc.example.edu.cn hostname
+```
+
+On Windows (no `ssh-copy-id`), the equivalent in PowerShell:
+
+```powershell
+type $env:USERPROFILE\.ssh\id_ed25519.pub | ssh -p 22 you@hpc.example.edu.cn "mkdir -p ~/.ssh && cat >> ~/.ssh/authorized_keys"
+```
+
+Optional but recommended: add the host to `~/.ssh/config` so `ssh gzu` works:
+
+```
+Host gzu
+  HostName hpc.example.edu.cn
+  Port 22
+  User you
+  IdentityFile ~/.ssh/id_ed25519
+```
+
+### 3.2 Let clu know your machines
+
+```bash
+# With ~/.ssh/config: one-off import (a copy; only public-key entries; ProxyJump parsed automatically)
 clu connection import
 
-# 2. Mark Slurm entries as cluster (import defaults to an IP heuristic: instance/local)
+# Without ssh config: add directly
+clu connection add gzu --host hpc.example.edu.cn --user you --port 22
+
+# Slurm clusters must be marked as cluster (import defaults to an IP heuristic: instance/local)
 clu connection add gzu --host hpc.example.edu.cn --user you --port 22 --kind cluster
 #    or edit the imported entry's kind in ~/.config/clu/connections.toml
+```
 
-# 3. Start the daemon (every command auto-ensures it afterwards; usually not needed manually)
+### 3.3 Try it
+
+```bash
+# Start the daemon (every command auto-ensures it afterwards; usually not needed manually)
 clu server ensure
 
-# 4. Try it
-clu connection check gzu          # a real connection through the pool
+# A real connection through the pool
+clu connection check gzu
+
+# Run a remote command
 clu exec gzu "squeue -u $USER | head"
 ```
 
