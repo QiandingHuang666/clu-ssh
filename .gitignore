@@ -29,3 +29,6 @@ daemon-pty/daemon-pty
 *.build/
 *.dist/
 nuitka-crash-report.xml
+
+#本地跑分
+bench/

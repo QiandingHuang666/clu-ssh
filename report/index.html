@@ -1,0 +1,91 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>clu vs baseline · 集群任务基准</title><style>
+  :root {
+    color-scheme: light;
+    --surface:#fcfcfb; --plane:#f9f9f7; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+    --grid:#e1e0d9; --axis:#c3c2b7; --hair:rgba(11,11,11,.10);
+    --s1:#2a78d6; --s2:#eb6834;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:where(:not([data-theme="light"])) {
+      color-scheme: dark; --surface:#1a1a19; --plane:#0d0d0d; --ink:#f0efec;
+      --ink2:#c3c2b7; --muted:#898781; --grid:#2c2c2a; --axis:#383835;
+      --hair:rgba(255,255,255,.10); --s1:#3987e5; --s2:#d95926;
+    }
+  }
+  :root[data-theme="dark"] {
+    color-scheme: dark; --surface:#1a1a19; --plane:#0d0d0d; --ink:#f0efec;
+    --ink2:#c3c2b7; --muted:#898781; --grid:#2c2c2a; --axis:#383835;
+    --hair:rgba(255,255,255,.10); --s1:#3987e5; --s2:#d95926;
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--plane); color:var(--ink);
+         font:15px/1.55 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width: 880px; margin: 0 auto; padding: 32px 16px 64px; }
+  h1 { font-size:24px; margin:0 0 4px; }
+  .lead { color:var(--ink2); margin:0 0 20px; }
+  .hero { display:grid; grid-template-columns:repeat(3,1fr); gap:12px; margin-bottom:20px; }
+  .tile { background:var(--surface); border:1px solid var(--hair); border-radius:10px; padding:14px 16px; }
+  .tile .k { color:var(--muted); font-size:12px; }
+  .tile .v { font-size:26px; font-weight:650; margin-top:2px; }
+  .tile .d { font-size:12px; color:var(--ink2); margin-top:2px; }
+  .card { background:var(--surface); border:1px solid var(--hair); border-radius:12px; padding:16px 18px; margin:16px 0; }
+  .card h2 { font-size:15px; margin:0; }
+  .sub { color:var(--muted); font-size:12px; margin:2px 0 10px; }
+  .legend { display:flex; gap:16px; align-items:center; font-size:13px; color:var(--ink2); margin-bottom:6px; }
+  .sw { width:10px; height:10px; border-radius:2px; display:inline-block; margin-right:6px; }
+  .sw.s1 { background:var(--s1); } .sw.s2 { background:var(--s2); }
+  svg { width:100%; height:auto; display:block; }
+  .grid { stroke:var(--grid); stroke-width:1; }
+  .axis { stroke:var(--axis); stroke-width:1; }
+  .tick,.xlabel { fill:var(--muted); font-size:12px; font-variant-numeric:tabular-nums; }
+  .vlabel { fill:var(--ink2); font-size:12px; font-variant-numeric:tabular-nums; }
+  .bar.s1 { fill:var(--s1); } .bar.s2 { fill:var(--s2); }
+  .bar:hover { opacity:.82; }
+  #tip { position:fixed; pointer-events:none; z-index:9; display:none; background:var(--surface);
+         color:var(--ink); border:1px solid var(--hair); border-radius:8px; padding:8px 10px;
+         font-size:12px; box-shadow:0 4px 14px rgba(0,0,0,.12); }
+  details { background:var(--surface); border:1px solid var(--hair); border-radius:12px; padding:12px 16px; }
+  summary { cursor:pointer; font-weight:600; }
+  table { width:100%; border-collapse:collapse; font-size:12.5px; margin-top:10px; font-variant-numeric:tabular-nums; }
+  th,td { text-align:right; padding:6px 8px; border-bottom:1px solid var(--grid); }
+  th:first-child,td:first-child { text-align:left; }
+  th { color:var(--muted); font-weight:500; }
+  .note { color:var(--muted); font-size:12px; margin-top:8px; }
+  @media (max-width:560px) { .hero { grid-template-columns:1fr; } }
+  @page { size: 1122px 794px; margin: 0; }
+  body.pdf { background: var(--surface); }
+  body.pdf main { max-width: none; padding: 28px 36px; }
+  body.pdf .card { margin: 0; border: none; background: var(--surface); }
+  body.pdf svg { height: 560px; }
+</style></head>
+<body><main>
+  <h1>clu vs baseline · 集群任务基准</h1>
+  <p class="lead">4 个集群操作任务，同一模型与中转，同一集群 cluster-r。成本按 token 计（输入 + 输出 + 缓存读）。</p>
+  <div class="hero">
+    <div class="tile"><div class="k">总 token · clu</div><div class="v">279,816</div><div class="d">baseline 722,679（39%）</div></div>
+    <div class="tile"><div class="k">总墙钟 · clu</div><div class="v">81s</div><div class="d">baseline 185s（44%）</div></div>
+    <div class="tile"><div class="k">总轮次 · clu</div><div class="v">18</div><div class="d">baseline 42（43%）</div></div>
+  </div>
+  <div class="card"><h2>总 token 消耗</h2><p class="sub">输入 + 输出 + 缓存读；成本口径与中转计费一致</p><div class="legend"><span><span class="sw s1"></span>clu（MCP）</span><span><span class="sw s2"></span>baseline（裸 ssh）</span></div><svg viewBox="0 0 900 430" role="img"><line class="grid" x1="64" x2="880" y1="378.0" y2="378.0"/><text class="tick" x="55" y="382.0" text-anchor="end">0k</text><line class="grid" x1="64" x2="880" y1="291.0" y2="291.0"/><text class="tick" x="55" y="295.0" text-anchor="end">60k</text><line class="grid" x1="64" x2="880" y1="204.0" y2="204.0"/><text class="tick" x="55" y="208.0" text-anchor="end">120k</text><line class="grid" x1="64" x2="880" y1="117.0" y2="117.0"/><text class="tick" x="55" y="121.0" text-anchor="end">180k</text><line class="grid" x1="64" x2="880" y1="30.0" y2="30.0"/><text class="tick" x="55" y="34.0" text-anchor="end">240k</text><line class="axis" x1="64" x2="880" y1="378" y2="378"/><path class="bar s1" d="M95.0,378.0 L95.0,289.12315 Q95.0,285.12315 99.0,285.12315 L137.0,285.12315 Q141.0,285.12315 141.0,289.12315 L141.0,378.0 Z" data-label="T1 空闲 GPU · clu" data-value="64,053 tokens"/><text class="vlabel" x="118.0" y="278.1" text-anchor="middle">64.1k</text><path class="bar s2" d="M143.0,378.0 L143.0,108.4169 Q143.0,104.4169 147.0,104.4169 L185.0,104.4169 Q189.0,104.4169 189.0,108.4169 L189.0,378.0 Z" data-label="T1 空闲 GPU · baseline" data-value="188,678 tokens"/><text class="vlabel" x="166.0" y="97.4" text-anchor="middle">188.7k</text><text class="xlabel" x="166.0" y="402" text-anchor="middle">T1 空闲 GPU</text><path class="bar s1" d="M299.0,378.0 L299.0,318.5654 Q299.0,314.5654 303.0,314.5654 L341.0,314.5654 Q345.0,314.5654 345.0,318.5654 L345.0,378.0 Z" data-label="T2 作业列表 · clu" data-value="43,748 tokens"/><text class="vlabel" x="322.0" y="307.6" text-anchor="middle">43.7k</text><path class="bar s2" d="M347.0,378.0 L347.0,165.9993 Q347.0,161.9993 351.0,161.9993 L389.0,161.9993 Q393.0,161.9993 393.0,165.9993 L393.0,378.0 Z" data-label="T2 作业列表 · baseline" data-value="148,966 tokens"/><text class="vlabel" x="370.0" y="155.0" text-anchor="middle">149.0k</text><text class="xlabel" x="370.0" y="402" text-anchor="middle">T2 作业列表</text><path class="bar s1" d="M503.0,378.0 L503.0,316.02935 Q503.0,312.02935 507.0,312.02935 L545.0,312.02935 Q549.0,312.02935 549.0,316.02935 L549.0,378.0 Z" data-label="T3 提交作业 · clu" data-value="45,497 tokens"/><text class="vlabel" x="526.0" y="305.0" text-anchor="middle">45.5k</text><path class="bar s2" d="M551.0,378.0 L551.0,148.91105 Q551.0,144.91105 555.0,144.91105 L593.0,144.91105 Q597.0,144.91105 597.0,148.91105 L597.0,378.0 Z" data-label="T3 提交作业 · baseline" data-value="160,751 tokens"/><text class="vlabel" x="574.0" y="137.9" text-anchor="middle">160.8k</text><text class="xlabel" x="574.0" y="402" text-anchor="middle">T3 提交作业</text><path class="bar s1" d="M707.0,378.0 L707.0,198.5489 Q707.0,194.5489 711.0,194.5489 L749.0,194.5489 Q753.0,194.5489 753.0,198.5489 L753.0,378.0 Z" data-label="T4 查状态+取消 · clu" data-value="126,518 tokens"/><text class="vlabel" x="730.0" y="187.5" text-anchor="middle">126.5k</text><path class="bar s2" d="M755.0,378.0 L755.0,56.78820000000002 Q755.0,52.78820000000002 759.0,52.78820000000002 L797.0,52.78820000000002 Q801.0,52.78820000000002 801.0,56.78820000000002 L801.0,378.0 Z" data-label="T4 查状态+取消 · baseline" data-value="224,284 tokens"/><text class="vlabel" x="778.0" y="45.8" text-anchor="middle">224.3k</text><text class="xlabel" x="778.0" y="402" text-anchor="middle">T4 查状态+取消</text></svg></div>
+  <div class="card"><h2>墙钟时间</h2><p class="sub">每个任务的端到端耗时</p><div class="legend"><span><span class="sw s1"></span>clu（MCP）</span><span><span class="sw s2"></span>baseline（裸 ssh）</span></div><svg viewBox="0 0 900 430" role="img"><line class="grid" x1="64" x2="880" y1="378.0" y2="378.0"/><text class="tick" x="55" y="382.0" text-anchor="end">0</text><line class="grid" x1="64" x2="880" y1="278.6" y2="278.6"/><text class="tick" x="55" y="282.6" text-anchor="end">20</text><line class="grid" x1="64" x2="880" y1="179.1" y2="179.1"/><text class="tick" x="55" y="183.1" text-anchor="end">40</text><line class="grid" x1="64" x2="880" y1="79.7" y2="79.7"/><text class="tick" x="55" y="83.7" text-anchor="end">60</text><line class="axis" x1="64" x2="880" y1="378" y2="378"/><path class="bar s1" d="M95.0,378.0 L95.0,267.65714285714284 Q95.0,263.65714285714284 99.0,263.65714285714284 L137.0,263.65714285714284 Q141.0,263.65714285714284 141.0,267.65714285714284 L141.0,378.0 Z" data-label="T1 空闲 GPU · clu" data-value="23 秒"/><text class="vlabel" x="118.0" y="256.7" text-anchor="middle">23s</text><path class="bar s2" d="M143.0,378.0 L143.0,163.25714285714287 Q143.0,159.25714285714287 147.0,159.25714285714287 L185.0,159.25714285714287 Q189.0,159.25714285714287 189.0,163.25714285714287 L189.0,378.0 Z" data-label="T1 空闲 GPU · baseline" data-value="44 秒"/><text class="vlabel" x="166.0" y="152.3" text-anchor="middle">44s</text><text class="xlabel" x="166.0" y="402" text-anchor="middle">T1 空闲 GPU</text><path class="bar s1" d="M299.0,378.0 L299.0,312.4 Q299.0,308.4 303.0,308.4 L341.0,308.4 Q345.0,308.4 345.0,312.4 L345.0,378.0 Z" data-label="T2 作业列表 · clu" data-value="14 秒"/><text class="vlabel" x="322.0" y="301.4" text-anchor="middle">14s</text><path class="bar s2" d="M347.0,378.0 L347.0,227.8857142857143 Q347.0,223.8857142857143 351.0,223.8857142857143 L389.0,223.8857142857143 Q393.0,223.8857142857143 393.0,227.8857142857143 L393.0,378.0 Z" data-label="T2 作业列表 · baseline" data-value="31 秒"/><text class="vlabel" x="370.0" y="216.9" text-anchor="middle">31s</text><text class="xlabel" x="370.0" y="402" text-anchor="middle">T2 作业列表</text><path class="bar s1" d="M503.0,378.0 L503.0,302.45714285714286 Q503.0,298.45714285714286 507.0,298.45714285714286 L545.0,298.45714285714286 Q549.0,298.45714285714286 549.0,302.45714285714286 L549.0,378.0 Z" data-label="T3 提交作业 · clu" data-value="16 秒"/><text class="vlabel" x="526.0" y="291.5" text-anchor="middle">16s</text><path class="bar s2" d="M551.0,378.0 L551.0,158.28571428571428 Q551.0,154.28571428571428 555.0,154.28571428571428 L593.0,154.28571428571428 Q597.0,154.28571428571428 597.0,158.28571428571428 L597.0,378.0 Z" data-label="T3 提交作业 · baseline" data-value="45 秒"/><text class="vlabel" x="574.0" y="147.3" text-anchor="middle">45s</text><text class="xlabel" x="574.0" y="402" text-anchor="middle">T3 提交作业</text><path class="bar s1" d="M707.0,378.0 L707.0,242.79999999999998 Q707.0,238.79999999999998 711.0,238.79999999999998 L749.0,238.79999999999998 Q753.0,238.79999999999998 753.0,242.79999999999998 L753.0,378.0 Z" data-label="T4 查状态+取消 · clu" data-value="28 秒"/><text class="vlabel" x="730.0" y="231.8" text-anchor="middle">28s</text><path class="bar s2" d="M755.0,378.0 L755.0,58.85714285714283 Q755.0,54.85714285714283 759.0,54.85714285714283 L797.0,54.85714285714283 Q801.0,54.85714285714283 801.0,58.85714285714283 L801.0,378.0 Z" data-label="T4 查状态+取消 · baseline" data-value="65 秒"/><text class="vlabel" x="778.0" y="47.9" text-anchor="middle">65s</text><text class="xlabel" x="778.0" y="402" text-anchor="middle">T4 查状态+取消</text></svg></div>
+  <div class="card"><h2>对话轮次</h2><p class="sub">每个任务消耗的 agent 轮次</p><div class="legend"><span><span class="sw s1"></span>clu（MCP）</span><span><span class="sw s2"></span>baseline（裸 ssh）</span></div><svg viewBox="0 0 900 430" role="img"><line class="grid" x1="64" x2="880" y1="378.0" y2="378.0"/><text class="tick" x="55" y="382.0" text-anchor="end">0</text><line class="grid" x1="64" x2="880" y1="262.0" y2="262.0"/><text class="tick" x="55" y="266.0" text-anchor="end">4</text><line class="grid" x1="64" x2="880" y1="146.0" y2="146.0"/><text class="tick" x="55" y="150.0" text-anchor="end">8</text><line class="grid" x1="64" x2="880" y1="30.0" y2="30.0"/><text class="tick" x="55" y="34.0" text-anchor="end">12</text><line class="axis" x1="64" x2="880" y1="378" y2="378"/><path class="bar s1" d="M95.0,378.0 L95.0,266.0 Q95.0,262.0 99.0,262.0 L137.0,262.0 Q141.0,262.0 141.0,266.0 L141.0,378.0 Z" data-label="T1 空闲 GPU · clu" data-value="4 turns"/><text class="vlabel" x="118.0" y="255.0" text-anchor="middle">4</text><path class="bar s2" d="M143.0,378.0 L143.0,63.0 Q143.0,59.0 147.0,59.0 L185.0,59.0 Q189.0,59.0 189.0,63.0 L189.0,378.0 Z" data-label="T1 空闲 GPU · baseline" data-value="11 turns"/><text class="vlabel" x="166.0" y="52.0" text-anchor="middle">11</text><text class="xlabel" x="166.0" y="402" text-anchor="middle">T1 空闲 GPU</text><path class="bar s1" d="M299.0,378.0 L299.0,295.0 Q299.0,291.0 303.0,291.0 L341.0,291.0 Q345.0,291.0 345.0,295.0 L345.0,378.0 Z" data-label="T2 作业列表 · clu" data-value="3 turns"/><text class="vlabel" x="322.0" y="284.0" text-anchor="middle">3</text><path class="bar s2" d="M347.0,378.0 L347.0,150.0 Q347.0,146.0 351.0,146.0 L389.0,146.0 Q393.0,146.0 393.0,150.0 L393.0,378.0 Z" data-label="T2 作业列表 · baseline" data-value="8 turns"/><text class="vlabel" x="370.0" y="139.0" text-anchor="middle">8</text><text class="xlabel" x="370.0" y="402" text-anchor="middle">T2 作业列表</text><path class="bar s1" d="M503.0,378.0 L503.0,295.0 Q503.0,291.0 507.0,291.0 L545.0,291.0 Q549.0,291.0 549.0,295.0 L549.0,378.0 Z" data-label="T3 提交作业 · clu" data-value="3 turns"/><text class="vlabel" x="526.0" y="284.0" text-anchor="middle">3</text><path class="bar s2" d="M551.0,378.0 L551.0,34.0 Q551.0,30.0 555.0,30.0 L593.0,30.0 Q597.0,30.0 597.0,34.0 L597.0,378.0 Z" data-label="T3 提交作业 · baseline" data-value="12 turns"/><text class="vlabel" x="574.0" y="23.0" text-anchor="middle">12</text><text class="xlabel" x="574.0" y="402" text-anchor="middle">T3 提交作业</text><path class="bar s1" d="M707.0,378.0 L707.0,150.0 Q707.0,146.0 711.0,146.0 L749.0,146.0 Q753.0,146.0 753.0,150.0 L753.0,378.0 Z" data-label="T4 查状态+取消 · clu" data-value="8 turns"/><text class="vlabel" x="730.0" y="139.0" text-anchor="middle">8</text><path class="bar s2" d="M755.0,378.0 L755.0,63.0 Q755.0,59.0 759.0,59.0 L797.0,59.0 Q801.0,59.0 801.0,63.0 L801.0,378.0 Z" data-label="T4 查状态+取消 · baseline" data-value="11 turns"/><text class="vlabel" x="778.0" y="52.0" text-anchor="middle">11</text><text class="xlabel" x="778.0" y="402" text-anchor="middle">T4 查状态+取消</text></svg></div>
+  <details><summary>数据表（每任务明细）</summary>
+    <table><thead><tr><th>任务</th><th>输入</th><th>输出</th><th>缓存读</th><th>总 token</th><th>turns</th><th>墙钟</th></tr></thead>
+    <tbody><tr><td>T1 空闲 GPU</td><td>29,849</td><td>1,308</td><td>32,896</td><td>64,053</td><td>4</td><td>23s</td></tr><tr><td>T2 作业列表</td><td>27,004</td><td>744</td><td>16,000</td><td>43,748</td><td>3</td><td>14s</td></tr><tr><td>T3 提交作业</td><td>28,390</td><td>851</td><td>16,256</td><td>45,497</td><td>3</td><td>16s</td></tr><tr><td>T4 查状态+取消</td><td>34,410</td><td>1,356</td><td>90,752</td><td>126,518</td><td>8</td><td>28s</td></tr><tr><td>T1 空闲 GPU</td><td>21,321</td><td>2,237</td><td>165,120</td><td>188,678</td><td>11</td><td>44s</td></tr><tr><td>T2 作业列表</td><td>20,468</td><td>1,394</td><td>127,104</td><td>148,966</td><td>8</td><td>31s</td></tr><tr><td>T3 提交作业</td><td>21,607</td><td>2,824</td><td>136,320</td><td>160,751</td><td>12</td><td>45s</td></tr><tr><td>T4 查状态+取消</td><td>23,843</td><td>3,449</td><td>196,992</td><td>224,284</td><td>11</td><td>65s</td></tr></tbody></table>
+    <p class="note">数据来自 bench/local-results（干净 PATH 版：baseline 无 clu、无技能、无 MCP）。</p>
+  </details>
+</main><div id="tip"></div>
+<script>
+const tip=document.getElementById('tip');
+document.querySelectorAll('.bar').forEach(el=>{
+  el.addEventListener('mouseenter',()=>{tip.textContent=el.dataset.label+' · '+el.dataset.value;tip.style.display='block';});
+  el.addEventListener('mousemove',e=>{const p=12;let x=e.clientX+p,y=e.clientY+p;
+    if(x+tip.offsetWidth>innerWidth-8)x=e.clientX-tip.offsetWidth-p;
+    if(y+tip.offsetHeight>innerHeight-8)y=e.clientY-tip.offsetHeight-p;
+    tip.style.left=x+'px';tip.style.top=y+'px';});
+  el.addEventListener('mouseleave',()=>{tip.style.display='none';});
+});
+</script></body></html>
