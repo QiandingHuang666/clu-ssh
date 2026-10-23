@@ -1,7 +1,11 @@
 # clu
 
 > SSH 会话保持/管理 + Slurm 集群与普通服务器的 AI agent 能力层。
-> 面向高校师生的单用户工具：Claude Code（MCP）与 `clu` CLI 共享同一 daemon。
+> 面向高校师生的单用户工具：任意 MCP 客户端（Claude Code、Codex 等）与 `clu` CLI 共享同一 daemon。
+
+**更快、更省**：结构化 MCP 工具让 agent 一步拿到答案，而不是多轮手拼 ssh/sbatch 命令。
+实测 4 个集群任务（Claude Code CLI + deepseek-v4-flash）：**token 仅 39%、耗时 44%、轮次 43%**
+（对比裸 ssh 基线，见[实测对比](#实测对比更快更省2026-10-23)）。
 
 ---
 
@@ -13,7 +17,7 @@
 - **连接复用**：本地 daemon 持有长连池，命令秒回、断线自动重连
 - **留痕**：每次执行写 SQLite，跨会话可查"上次那个作业怎么样了"
 
-## 实测对比（2026-10-23）
+## 实测对比：更快、更省（2026-10-23）
 
 真实会话实测：**Claude Code CLI 2.1.309** + 模型 **deepseek-v4-flash**（经本地中转），
 目标集群为 `cluster-r`（贵州大学登录节点经 frp 转发，Slurm 22.05.8）。
@@ -48,6 +52,10 @@
 取消操作均生效。
 
 图表文件（PNG / PDF / 交互式 HTML）：[`report/`](report/)。
+**为什么更快更省**：`resources`、`jobs`、`submit` 等工具把"取原始数据 → 解析 → 拼命令"
+收进一次调用——agent 不再需要 `sinfo`/`scontrol`/`squeue` 多轮试探。轮次从 42 降到 18，
+token 从 72.3 万降到 28.0 万；MCP 工具 schema 本身只占约 3.9k tokens，远低于多轮命令的成本。
+
 说明：单轮小样本，绝对数字会受模型与中转波动影响；相对差距（2–3 倍）在多次运行中稳定。
 
 ---
@@ -221,15 +229,53 @@ clu forward list
 clu forward remove fwd-1
 ```
 
-## 6. 接入 Claude Code（MCP）
+## 6. 接入 MCP 客户端
+
+`clu-mcp` 是标准 **stdio MCP server**（服务器名 `clu`），启动时自动拉起本地 daemon，
+无需任何环境变量。接入任一客户端后即可使用下表的 16 个工具。
+
+### Claude Code
 
 ```bash
 # 用户级（所有会话可用）
-claude mcp add --scope user clu -- /path/to/clu-mcp     # 源码安装用 .venv/bin/clu-mcp
+claude mcp add --scope user clu -- clu-mcp
 
 # 项目级（随项目共享）
 claude mcp add clu -- clu-mcp
 ```
+
+源码安装时把命令换成绝对路径：`claude mcp add --scope user clu -- /path/to/clu-ssh/.venv/bin/clu-mcp`。
+
+### Codex CLI
+
+编辑 `~/.codex/config.toml`：
+
+```toml
+[mcp_servers.clu]
+command = "clu-mcp"
+args = []
+```
+
+### 其他 MCP 客户端（Claude Desktop / Cursor / Cline / Windsurf 等）
+
+在客户端的 MCP 配置文件中加入：
+
+```json
+{
+  "mcpServers": {
+    "clu": { "command": "clu-mcp", "args": [] }
+  }
+}
+```
+
+常见位置：Claude Desktop（macOS `~/Library/Application Support/Claude/claude_desktop_config.json`，
+Windows `%APPDATA%\Claude\claude_desktop_config.json`）、Cursor（`~/.cursor/mcp.json` 或项目 `.cursor/mcp.json`）。
+Cline / Windsurf 在各自的 MCP 设置界面添加同一条目即可。
+
+> 一次性验证可用 `claude -p "..." --mcp-config <json> --strict-mcp-config`，
+> 只加载指定 MCP 配置、忽略其他来源。
+
+接入后先执行 `clu connection import` 配置连接，再让 agent 使用工具。
 
 接入后 16 个工具（带 ○ 的只读，可在 Claude Code 权限设置里配免确认）：
 
