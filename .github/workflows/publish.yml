@@ -121,5 +121,8 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release upload "$GITHUB_REF_NAME" dist/*.tar.gz dist/*.zip dist/*.sha256 \
+          shopt -s nullglob
+          files=(dist/*.tar.gz dist/*.zip dist/*.sha256)
+          [ ${#files[@]} -gt 0 ] || { echo "无产物可上传"; exit 1; }
+          gh release upload "$GITHUB_REF_NAME" "${files[@]}" \
             --repo "$GITHUB_REPOSITORY" --clobber
